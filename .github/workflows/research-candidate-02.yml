@@ -1,0 +1,28 @@
+name: Research candidate 02 peridynamics zero neighbors
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run deterministic RED/GREEN model
+        run: python3 research/candidate_02_peridynamics_zero_neighbors.py
+      - name: Pin production division and missing guard
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('modules/peridynamics/src/mesh/PeridynamicsMesh.C')
+          s = p.read_text()
+          assert '_pdnode_average_spacing[id] = dist_sum / n_fe_neighbors;' in s
+          assert 'if (n_fe_neighbors == 0)' not in s
+          print('verified zero-neighbor division on pinned production source')
+          PY
