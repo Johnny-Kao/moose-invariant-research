@@ -1,0 +1,35 @@
+name: Research native framework build probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-framework:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: moose-ci
+          auto-activate-base: false
+          miniforge-version: latest
+          channels: conda-forge,https://conda.software.inl.gov/public
+          channel-priority: strict
+      - name: Install published MOOSE build dependencies
+        shell: bash -el {0}
+        run: conda install --yes moose-dev
+      - name: Build MooseTestApp against published dependencies
+        shell: bash -el {0}
+        run: |
+          export LIBMESH_DIR="$CONDA_PREFIX"
+          export METHOD=opt
+          make -C test -j2
+      - name: Record native build result
+        shell: bash -el {0}
+        run: test -x test/moose_test-opt
