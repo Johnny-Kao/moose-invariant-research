@@ -1,0 +1,49 @@
+name: Research static triage
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Scan production C++ sources
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib,re,collections
+          roots=[pathlib.Path('framework'),pathlib.Path('modules')]
+          patterns={
+            'allocation arithmetic':r'\b(?:resize|reserve|malloc|calloc|realloc)\s*\([^;\n]*(?:\*|<<|\+)[^;\n]*\)',
+            'narrowing size':r'\b(?:unsigned int|int|uint32_t)\s+\w+\s*=\s*[^;\n]*\.size\(\)',
+            'unchecked indexing arithmetic':r'\[[^\]\n]*\w+\s*\*\s*\w+[^\]\n]*\]',
+            'cache lifecycle':r'\b(?:_\w*cache\w*|_\w*cached\w*)\s*\.(?:clear|erase|resize|find|emplace|insert)\(',
+            'state rollback':r'\b(?:restore|rollback|rejectStep|resetState|meshChanged)\s*\(',
+            'ownership':r'\b(?:memcpy|memmove|new\s+\w+\s*\[|delete\s*\[)\s*',
+            'MPI reduction':r'\b(?:_communicator|comm\(\)|communicator\(\))\s*\.\s*(?:sum|min|max|allgather|gather)\(',
+            'numeric finite checks':r'\b(?:isfinite|isnan|isinf|numeric_limits<[^>]+>::(?:max|min|lowest)\()'
+          }
+          totals=collections.Counter()
+          hits=collections.defaultdict(list)
+          count=0
+          for root in roots:
+            for p in sorted(root.rglob('*')):
+              if p.suffix not in ('.C','.h','.cpp','.hpp') or not {'src','include'}.intersection(p.parts) or {'test','tests','contrib'}.intersection(p.parts): continue
+              count+=1
+              for n,line in enumerate(p.read_text(errors='replace').splitlines(),1):
+                for kind,pat in patterns.items():
+                  if re.search(pat,line):
+                    totals[kind]+=1
+                    weight=(3 if 'framework' in p.parts else 0)+(2 if any(s in str(p).lower() for s in ('transfer','mesh','material','restart','assembly','system','thread','solver')) else 0)
+                    hits[kind].append((weight,str(p),n,line.strip()[:180]))
+          print('PRODUCTION FILES SCANNED:',count)
+          for kind in patterns:
+            print('CATEGORY',kind,'MATCHES',totals[kind])
+            for _,p,n,line in sorted(hits[kind],key=lambda h:(-h[0],h[1],h[2]))[:15]:
+              print(f'{p}:{n}: {line}')
+          print('Pattern matches are triage leads, not verified defects.')
+          PY
