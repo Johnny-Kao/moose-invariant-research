@@ -1,0 +1,29 @@
+name: Research candidate 04 Bayesian active NaN
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run deterministic RED/GREEN model
+        run: python3 research/candidate_04_bayesian_active_nan.py
+      - name: Pin production filter and unguarded division
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('modules/stochastic_tools/src/reporters/BayesianActiveLearner.C')
+          s = p.read_text()
+          assert 'if (!std::isnan(_log_likelihood[ii]))' in s
+          assert 'convergence_value = std::sqrt(convergence_value) / num_valid;' in s
+          assert 'if (num_valid == 0)' not in s
+          print('verified all-NaN filter and unguarded convergence division')
+          PY
