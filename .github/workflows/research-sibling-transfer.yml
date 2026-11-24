@@ -1,0 +1,35 @@
+name: Research sibling transfer allocation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-reproducer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run deterministic RED/GREEN contract reproducer
+        run: python3 research/sibling_transfer_allocation_repro.py
+      - name: Assert affected source expressions are present
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          files = [
+              "framework/src/transfers/MultiAppCopyTransfer.C",
+              "framework/src/transfers/MultiAppPostprocessorTransfer.C",
+              "framework/src/transfers/MultiAppPostprocessorToAuxScalarTransfer.C",
+              "framework/src/transfers/MultiAppReporterTransfer.C",
+              "framework/src/transfers/MultiAppScalarToAuxScalarTransfer.C",
+          ]
+          for name in files:
+              text = Path(name).read_text()
+              needle = "getFromMultiApp()->hasLocalApp(i) + getFromMultiApp()->hasLocalApp(i)"
+              assert needle in text, f"expected current candidate expression missing: {name}"
+          print(f"verified {len(files)} affected validators at the checked-out source")
+          PY
