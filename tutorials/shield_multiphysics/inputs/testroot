@@ -1,0 +1,3 @@
+app_name = ../../../modules/combined/combined
+allow_warnings = false
+allow_unused = false

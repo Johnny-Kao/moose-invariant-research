@@ -1,0 +1,17 @@
+[Tests]
+  [quadrature_locator_plus_constraint]
+    type = RunApp
+    input = quadrature_locator_plus_constraint.i
+    issues = '#5234'
+    requirement = 'The system shall be able to augment the nonlinear system sparsity based on constraints when there is a quadrature nearest-node locator.'
+    design = 'GeometricSearchData.md'
+  []
+  [adaptivity]
+    type = CSVDiff
+    input = quadrature_locator_plus_constraint_adaptivity.i
+    csvdiff = quadrature_locator_plus_constraint_adaptivity_out.csv
+    issues = '#32747'
+    requirement = 'The system shall correctly update, for node to face constraints, secondary-to-primary pairings when the mesh changes due to h-adaptivity and when the matrix is assembled using hash tables.'
+    design = 'GeometricSearchData.md'
+  []
+[]

@@ -1,0 +1,92 @@
+[Tests]
+  issues = '#617'
+  design = 'source/constraints/EqualValueBoundaryConstraint.md'
+  [test]
+    type = 'Exodiff'
+    input = 'equal_value_boundary_constraint_test.i'
+    exodiff = 'out.e'
+    abs_zero = 1e-9
+    cli_args = "Constraints/y_top/primary=45"
+    requirement = "The system shall include the ability to constrain the values on a boundary to a value "
+                  "at a prescribed node base on the node ID."
+  []
+  [test_primary_node_coord]
+    type = 'Exodiff'
+    input = 'equal_value_boundary_constraint_test.i'
+    exodiff = 'out.e'
+    abs_zero = 1e-9
+    cli_args = "Constraints/y_top/primary_node_coord='0.3333333333333 1.0 0.0'"
+    requirement = "The system shall include the ability to constrain the values on a boundary to a value "
+                  "at a prescribed node base on the node coordinates."
+  []
+  [adaptivity]
+    type = 'Exodiff'
+    input = 'adaptivity.i'
+    exodiff = 'adaptivity_out.e adaptivity_out.e-s002 adaptivity_out.e-s003'
+    mesh_mode = REPLICATED
+    requirement = "The system shall be able to enforce the equal value boundary constraint in parallel "
+                  "with adaptivity."
+  []
+  [evbc_primary_element_ghosting]
+    type = Exodiff
+    input = 'evbc_primary_element_ghosting.i'
+    exodiff = 'evbc_primary_element_ghosting_out.e'
+    abs_zero = 1e-9
+    requirement = "The system shall obtain the same equal value boundary constraint solution, with "
+                  "the primary node located by its coordinates, for any number of processors and on "
+                  "either a replicated or a distributed mesh, retaining the elements needed by the "
+                  "constraint when remote elements are deleted."
+  []
+  [generate_evbc_presplit_displaced]
+    type = CheckFiles
+    input = 'evbc_primary_element_ghosting.i'
+    cli_args = "--split-mesh 2 --split-file evbc_presplit_displaced Mesh/parallel_type=replicated "
+               "Mesh/displacements='disp_x disp_y' AuxVariables/disp_x/order=FIRST "
+               "AuxVariables/disp_y/order=FIRST Constraints/top/use_displaced_mesh=true "
+               "Outputs/exodus=false"
+    check_files = 'evbc_presplit_displaced.cpa.gz/2/header.gz
+                   evbc_presplit_displaced.cpa.gz/2/split-2-0.gz
+                   evbc_presplit_displaced.cpa.gz/2/split-2-1.gz'
+    recover = false
+    requirement = "The system shall generate a two-way pre-split mesh for an equal value boundary "
+                  "constraint problem with a displaced mesh."
+  []
+  [evbc_presplit_displaced]
+    type = Exodiff
+    input = 'evbc_primary_element_ghosting.i'
+    cli_args = "--use-split --split-file evbc_presplit_displaced "
+               "Mesh/displacements='disp_x disp_y' AuxVariables/disp_x/order=FIRST "
+               "AuxVariables/disp_y/order=FIRST Constraints/top/use_displaced_mesh=true "
+               "Outputs/hide='disp_x disp_y' Outputs/file_base=evbc_presplit_displaced_out"
+    exodiff = 'evbc_presplit_displaced_out.e'
+    abs_zero = 1e-9
+    prereq = 'generate_evbc_presplit_displaced'
+    mesh_mode = DISTRIBUTED
+    min_parallel = 2
+    max_parallel = 2
+    recover = false
+    requirement = "The system shall enforce an equal value boundary constraint after loading a "
+                  "pre-split distributed reference mesh and its displaced mesh."
+  []
+  [set_primary_and_coord_error]
+    type = RunException
+    input = 'equal_value_boundary_constraint_test.i'
+    expect_err = "Both 'primary' and 'primary_node_coord' parameters are set. They are mutually exclusive."
+    cli_args = "Constraints/y_top/primary=45 Constraints/y_top/primary_node_coord='0.3333333333333 1.0 0.0'"
+    requirement = "The system shall report an error when both node ID and node coordinates are set."
+  []
+  [error_not_find_node_id]
+    type = RunException
+    input = 'equal_value_boundary_constraint_test.i'
+    expect_err = "Couldn't find a node ID for the specified primary_node_coord."
+    cli_args = "Constraints/y_top/primary_node_coord='0.37 1.0 0.0'"
+    requirement = "The system shall report an error when it cannot find a node ID for the specified node coordinates."
+  []
+  [error_multiple_primary_nodes]
+    type = RunException
+    input = 'break_mesh_with_evbc.i'
+    expect_err = "Multiple nodes found for the specified primary_node_coord."
+    cli_args = "Constraints/corner/primary_node_coord='0.5 0.5 0.0'"
+    requirement = "The system shall report an error when multiple nodes are found for the specified node coordinates."
+  []
+[]

@@ -1,0 +1,149 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "NEML2ToMOOSEMaterialProperty.h"
+#include "NEML2ModelExecutor.h"
+
+#define registerNEML2ToMOOSEMaterialProperty(alias)                                                \
+  registerMooseObject("MooseApp", NEML2ToMOOSE##alias##MaterialProperty)
+
+registerNEML2ToMOOSEMaterialProperty(Real);
+registerNEML2ToMOOSEMaterialProperty(SymmetricRankTwoTensor);
+registerNEML2ToMOOSEMaterialProperty(SymmetricRankFourTensor);
+registerNEML2ToMOOSEMaterialProperty(RealVectorValue);
+registerNEML2ToMOOSEMaterialProperty(RankTwoTensor);
+registerNEML2ToMOOSEMaterialProperty(RankFourTensor);
+
+template <typename T>
+InputParameters
+NEML2ToMOOSEMaterialProperty<T>::validParams()
+{
+  auto params = Material::validParams();
+  params.addClassDescription("Provide an output (or its derivative) from a NEML2 model as a MOOSE "
+                             "material property of type " +
+                             demangle(typeid(T).name()) + ".");
+
+  params.addRequiredParam<UserObjectName>("neml2_executor",
+                                          "User object managing the execution of the NEML2 model.");
+  params.addRequiredParam<MaterialPropertyName>(
+      "to_moose",
+      "MOOSE material property used to store the NEML2 output variable (or its derivative)");
+  params.addRequiredParam<std::string>("from_neml2", "NEML2 output variable to read from");
+  params.addParam<std::string>(
+      "neml2_input_derivative",
+
+      "If supplied return the derivative of the NEML2 output variable with respect to this");
+  params.addParam<std::string>(
+      "neml2_parameter_derivative",
+      "If supplied return the derivative of the NEML2 output variable with respect to this NEML2 "
+      "model parameter");
+  // provide an optional initialization of the moose property (because we don't really know if it is
+  // going to become stateful or not)
+  params.addParam<MaterialPropertyName>("moose_material_property_init",
+                                        "Optional material property as the initial condition");
+
+  return params;
+}
+
+template <typename T>
+NEML2ToMOOSEMaterialProperty<T>::NEML2ToMOOSEMaterialProperty(const InputParameters & params)
+  : Material(params)
+#ifdef NEML2_ENABLED
+    ,
+    _execute_neml2_model(getUserObject<NEML2ModelExecutor>("neml2_executor")),
+    _prop(declareProperty<T>(getParam<MaterialPropertyName>("to_moose"))),
+    _prop0(isParamValid("moose_material_property_init")
+               ? &getMaterialProperty<T>("moose_material_property_init")
+               : nullptr),
+    _value(isParamValid("neml2_input_derivative")
+               ? _execute_neml2_model.getOutputDerivative(
+                     getParam<std::string>("from_neml2"),
+                     getParam<std::string>("neml2_input_derivative"))
+               : (isParamValid("neml2_parameter_derivative")
+                      ? _execute_neml2_model.getOutputParameterDerivative(
+                            getParam<std::string>("from_neml2"),
+                            getParam<std::string>("neml2_parameter_derivative"))
+                      : _execute_neml2_model.getOutput(getParam<std::string>("from_neml2"))))
+#endif
+{
+  NEML2Utils::assertNEML2Enabled();
+}
+
+#ifdef NEML2_ENABLED
+template <typename T>
+void
+NEML2ToMOOSEMaterialProperty<T>::computeProperties()
+{
+  // See issue #28971: Using _prop0 to set initial condition for this possibly stateful property may
+  // not work. As a workaround, we set the initial condition here when _t_step == 0.
+  if (_t_step == 0 && _prop0)
+  {
+    _prop.set() = _prop0->get();
+    return;
+  }
+
+  if (!_execute_neml2_model.outputReady())
+    return;
+
+  // A derivative retriever's tensor is produced only on passes that compute the derivative (see
+  // NEML2ModelExecutor::solve). If it has not been computed (e.g. an input derivative on a step
+  // where no Jacobian was assembled), report the derivative as zero.
+  if (!_value.defined())
+  {
+    for (_qp = 0; _qp < _qrule->n_points(); ++_qp)
+      MathUtils::mooseSetToZero(_prop[_qp]);
+    return;
+  }
+
+  // look up start index for current element
+  const auto i = _execute_neml2_model.getBatchIndex(_current_elem->id());
+  // The NEML2 output/derivative tensor is (batch, *base_shape) when batched; a leading batch
+  // axis is present iff the tensor has more dims than the base shape of the MOOSE type T.
+  const auto base_ndim = static_cast<int64_t>(NEML2Utils::Layout<T>::shape.size());
+  const bool batched = _value.dim() > base_ndim;
+
+  // Fast path: the retrieved output lives on the host (the default output_device) as a contiguous
+  // double buffer (see NEML2ModelExecutor::extractOutputs), so copy each element's data with a
+  // plain memcpy off data_ptr() rather than allocating an at::Tensor view per quadrature point.
+  // Fall back to the generic tensor copy only when the output was kept on an accelerator.
+  if (_value.is_cpu())
+  {
+    const Real * data = _value.template data_ptr<Real>();
+    const auto base_size = NEML2Utils::Layout<T>::strides[0];
+    for (_qp = 0; _qp < _qrule->n_points(); ++_qp)
+    {
+      // The batch-index map can outrun a not-yet-recomputed output/derivative tensor when the set
+      // of elements handled by the model grows mid-run (e.g. a moving subdomain adds elements
+      // before the next model evaluation). The generic tensor copy below relies on
+      // at::Tensor::operator[]'s bounds check throwing here; MOOSE catches that as a recoverable
+      // failure and cuts the time step, after which the model re-evaluates on the enlarged batch.
+      // The raw memcpy would instead read past the buffer, so guard it: on an out-of-range index
+      // fall back to the throwing copy to preserve that cut-back signal.
+      if (batched && static_cast<int64_t>(i + _qp) >= _value.size(0))
+        NEML2Utils::copyTensorToMOOSEData(_value[static_cast<int64_t>(i + _qp)], _prop[_qp]);
+      else
+        NEML2Utils::copyBlobToMOOSEData<T>(
+            batched ? data + static_cast<std::ptrdiff_t>(i + _qp) * base_size : data, _prop[_qp]);
+    }
+  }
+  else
+    for (_qp = 0; _qp < _qrule->n_points(); ++_qp)
+      NEML2Utils::copyTensorToMOOSEData(batched ? _value[static_cast<int64_t>(i + _qp)] : _value,
+                                        _prop[_qp]);
+}
+#endif
+
+#define instantiateNEML2ToMOOSEMaterialProperty(T) template class NEML2ToMOOSEMaterialProperty<T>
+
+instantiateNEML2ToMOOSEMaterialProperty(Real);
+instantiateNEML2ToMOOSEMaterialProperty(SymmetricRankTwoTensor);
+instantiateNEML2ToMOOSEMaterialProperty(SymmetricRankFourTensor);
+instantiateNEML2ToMOOSEMaterialProperty(RealVectorValue);
+instantiateNEML2ToMOOSEMaterialProperty(RankTwoTensor);
+instantiateNEML2ToMOOSEMaterialProperty(RankFourTensor);

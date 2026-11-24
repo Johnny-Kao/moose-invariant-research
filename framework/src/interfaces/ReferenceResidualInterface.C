@@ -1,0 +1,105 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "ReferenceResidualInterface.h"
+#include "MooseObject.h"
+#include "MooseEnum.h"
+
+InputParameters
+ReferenceResidualInterface::validParams()
+{
+  InputParameters params = emptyInputParameters();
+
+  params.addParam<SolverSystemName>(
+      "solver_sys", "nl0", "Solver system for which this object applies.");
+  params.addParam<TagName>(
+      "residual_vector",
+      "The tag name of the custom vector tag to use in place of the residual vector. This can be "
+      "used to provide greater control over which variable is used in absolute and relative "
+      "tolerancing. If not provided, the full residual vector will be used.");
+  params.addParam<TagName>("reference_vector", "The tag name of the reference residual vector.");
+  params.addParam<Real>("acceptable_multiplier",
+                        1.0,
+                        "Multiplier applied to relative tolerance for acceptable limit");
+  params.addParam<unsigned int>(
+      "acceptable_iterations",
+      0,
+      "Iterations after which convergence to acceptable limits is accepted");
+  params.addParam<std::vector<std::vector<NonlinearVariableName>>>(
+      "group_variables",
+      "Name of variables that are grouped together to check convergence. (Multiple groups can be "
+      "provided, separated by semicolon)");
+  params.addParam<std::vector<NonlinearVariableName>>(
+      "converge_on",
+      {},
+      "If supplied, use only these variables in the individual variable convergence check");
+  params.addParam<std::map<std::string, Real>>(
+      "variable_nl_abs_tol",
+      {},
+      "Pairs of a variable name and the absolute tolerance that replaces nl_abs_tol in that "
+      "variable's convergence check. Variables in a group must have the same tolerance.");
+  params.addParam<bool>("unscale_the_residual",
+                        false,
+                        "If set to true, utilize the variable specific residual scalar to unscale "
+                        "the residual before comparing against the absolute tolerance. This will "
+                        "also print the un-scaled residual to console. This will not change the "
+                        "relative tolerance check except for console output");
+  MooseEnum Lnorm("global_L2 local_L2 global_Linf local_Linf", "global_L2");
+  params.addParam<MooseEnum>(
+      "normalization_type",
+      Lnorm,
+      "The normalization type used to compare the reference and actual residuals.");
+  Lnorm.addDocumentation("global_L2",
+                         "Compare the L2 norm of the residual vector to the L2 norm of the "
+                         "absolute reference vector to determine relative convergence");
+  Lnorm.addDocumentation(
+      "local_L2",
+      "Compute the L2 norm of the residual vector divided component-wise by the absolute reference "
+      "vector to the L2 norm of the absolute reference vector to determine relative convergence");
+  Lnorm.addDocumentation(
+      "global_Linf",
+      "Compare the L-infinity norm of the residual vector to the L-infinity norm of the "
+      "absolute reference vector to determine relative convergence");
+  Lnorm.addDocumentation(
+      "local_Linf",
+      "Compute the L-infinity norm of the residual vector divided component-wise "
+      "by the absolute reference "
+      "vector to the L-infinity norm of the absolute reference vector to "
+      "determine relative convergence");
+
+  MooseEnum zero_ref_res("zero_tolerance relative_tolerance", "relative_tolerance");
+  params.addParam<MooseEnum>("zero_reference_residual_treatment",
+                             zero_ref_res,
+                             "Determine behavior if a reference residual value of zero is present "
+                             "for a particular variable.");
+  zero_ref_res.addDocumentation("zero_tolerance",
+                                "Solve is treated as converged if the residual is zero");
+  zero_ref_res.addDocumentation(
+      "relative_tolerance",
+      "Solve is treated as converged if the residual is below the relative tolerance");
+
+  params.addParamNamesToGroup("acceptable_iterations acceptable_multiplier",
+                              "Acceptable convergence");
+  params.addParamNamesToGroup("reference_vector", "Reference residual");
+  params.addParamNamesToGroup("group_variables variable_nl_abs_tol",
+                              "Variables to check for convergence");
+
+  return params;
+}
+
+ReferenceResidualInterface::ReferenceResidualInterface(const MooseObject * moose_object)
+  : _use_group_variables(false)
+{
+  if (moose_object->isParamValid("group_variables"))
+  {
+    _group_variables =
+        moose_object->getParam<std::vector<std::vector<NonlinearVariableName>>>("group_variables");
+    _use_group_variables = true;
+  }
+}

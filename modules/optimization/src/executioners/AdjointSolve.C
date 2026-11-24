@@ -1,0 +1,237 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "AdjointSolve.h"
+#include "OptimizationAppTypes.h"
+
+#include "FEProblem.h"
+#include "NonlinearSystemBase.h"
+#include "NonlinearSystem.h"
+#include "NodalBCBase.h"
+#include "MooseVariableFieldBase.h"
+#include "MooseVariableScalar.h"
+#include "Executioner.h"
+
+#include "libmesh/dof_map.h"
+#include "libmesh/fuzzy_equals.h"
+#include "libmesh/petsc_matrix.h"
+#include "libmesh/petsc_vector.h"
+#include "petscmat.h"
+
+InputParameters
+AdjointSolve::validParams()
+{
+  InputParameters params = emptyInputParameters();
+  params.addRequiredParam<std::vector<SolverSystemName>>(
+      "forward_system",
+      "Name of the nonlinear system representing the forward problem. Multiple and linear solver "
+      "systems are not currently supported.");
+  params.addRequiredParam<NonlinearSystemName>(
+      "adjoint_system", "Name of the system representing the adjoint problem.");
+  return params;
+}
+
+AdjointSolve::AdjointSolve(Executioner & ex)
+  : SolveObject(ex),
+    _forward_sys_num(
+        _problem.nlSysNum(getParam<std::vector<SolverSystemName>>("forward_system")[0])),
+    _adjoint_sys_num(_problem.nlSysNum(getParam<NonlinearSystemName>("adjoint_system"))),
+    _nl_forward(_problem.getNonlinearSystemBase(_forward_sys_num)),
+    _nl_adjoint(_problem.getNonlinearSystemBase(_adjoint_sys_num))
+{
+  // Disallow vectors of systems
+  if (getParam<std::vector<SolverSystemName>>("forward_system").size() != 1)
+    paramError("forward_system",
+               "Multiple nonlinear forward systems is not supported at the moment");
+
+  // These should never be hit, but just in case
+  if (!dynamic_cast<NonlinearSystem *>(&_nl_forward))
+    paramError("forward_system", "Forward system does not appear to be a 'NonlinearSystem'.");
+  if (!dynamic_cast<NonlinearSystem *>(&_nl_adjoint))
+    paramError("adjoint_system", "Adjoint system does not appear to be a 'NonlinearSystem'.");
+  // Adjoint system should never perform its own automatic scaling. Scaling factors from the forward
+  // system are applied.
+  _nl_adjoint.automaticScaling(false);
+
+  // Set the solver options for the adjoint system
+  mooseAssert(_problem.numSolverSystems() > 1,
+              "We should have forward and adjoint systems as evidenced by our initialization list");
+  const auto prefix = _nl_adjoint.prefix();
+  Moose::PetscSupport::storePetscOptions(_problem, prefix, ex);
+  Moose::PetscSupport::setConvergedReasonFlags(_problem, prefix);
+  // Set solver parameter prefix
+  auto & solver_params = _problem.solverParams(_nl_adjoint.number());
+  solver_params._prefix = prefix;
+  solver_params._solver_sys_num = _nl_adjoint.number();
+}
+
+bool
+AdjointSolve::solve()
+{
+  TIME_SECTION("execute", 1, "Executing adjoint problem", false);
+
+  mooseAssert(!_inner_solve,
+              "I don't see any code path in which this class winds up with an inner solve");
+
+  // enforce PETSc options are passed to the adjoint solve as well, as set in the user file
+  auto & petsc_options = _problem.getPetscOptions();
+  auto & pars = _problem.solverParams(_nl_adjoint.number());
+  Moose::PetscSupport::petscSetOptions(petsc_options, pars);
+
+  _problem.execute(OptimizationAppTypes::EXEC_ADJOINT_TIMESTEP_BEGIN);
+
+  if (!_problem.execMultiApps(OptimizationAppTypes::EXEC_ADJOINT_TIMESTEP_BEGIN))
+  {
+    _console << "MultiApps failed to converge on ADJOINT_TIMESTEP_BEGIN!" << std::endl;
+    return false;
+  }
+  // Output results between the forward and adjoint solve.
+  _problem.outputStep(OptimizationAppTypes::EXEC_ADJOINT_TIMESTEP_BEGIN);
+
+  checkIntegrity();
+
+  // Convenient references
+  // Adjoint matrix, solution, and right-hand-side
+  auto & matrix = cast_ref<ImplicitSystem &>(_nl_forward.system()).get_system_matrix();
+  auto & solution = _nl_adjoint.solution();
+  auto & rhs = _nl_adjoint.getResidualNonTimeVector();
+  // Linear solver parameters
+  auto & es = _problem.es();
+  const auto tol = es.parameters.get<Real>("linear solver tolerance");
+  const auto maxits = es.parameters.get<unsigned int>("linear solver maximum iterations");
+  // Linear solver for adjoint system
+  auto & solver = *cast_ref<ImplicitSystem &>(_nl_adjoint.system()).get_linear_solver();
+
+  // Assemble adjoint system by evaluating the forward Jacobian, computing the adjoint
+  // residual/source, and homogenizing nodal BCs
+  assembleAdjointSystem(matrix, solution, rhs);
+  applyNodalBCs(matrix, solution, rhs);
+
+  // Solve the adjoint system
+  solver.adjoint_solve(matrix, solution, rhs, tol, maxits);
+
+  // The forward Jacobian has its rows scaled by the variable scaling factors S, so the transposed
+  // solve returns mu with (S J)^T mu = -g. The adjoint is therefore lambda = S mu.
+  const auto & dof_map = _nl_forward.dofMap();
+  auto scaling = solution.zero_clone();
+  std::vector<dof_id_type> dof_indices;
+  const auto fill_scaling = [&](const MooseVariableBase & var)
+  {
+    const auto & factors = var.arrayScalingFactor();
+    for (const auto i : make_range(var.count()))
+    {
+      dof_map.local_variable_indices(dof_indices, _mesh.getMesh(), var.number() + i);
+      for (const auto dof : dof_indices)
+        scaling->set(dof, factors[i]);
+    }
+  };
+  for (const auto * const var : _nl_forward.getVariables(0))
+    fill_scaling(*var);
+  for (const auto * const var : _nl_forward.getScalarVariables(0))
+    fill_scaling(*var);
+  scaling->close();
+  solution *= *scaling;
+
+  // Hanging-node (and other DofMap) constraints are not applied by the raw transpose solve above,
+  // which leaves constrained dofs at zero, so back-substitute them here. The vector being
+  // constrained belongs to the adjoint system, not the forward system that owns the matrix.
+  _nl_adjoint.system().get_dof_map().enforce_constraints_exactly(_nl_adjoint.system(), &solution);
+
+  _nl_adjoint.update();
+  if (solver.get_converged_reason() < 0)
+  {
+    _console << "Adjoint solve failed to converge with reason: "
+             << Utility::enum_to_string(solver.get_converged_reason()) << std::endl;
+    return false;
+  }
+
+  _problem.execute(OptimizationAppTypes::EXEC_ADJOINT_TIMESTEP_END);
+  if (!_problem.execMultiApps(OptimizationAppTypes::EXEC_ADJOINT_TIMESTEP_END))
+  {
+    _console << "MultiApps failed to converge on ADJOINT_TIMESTEP_END!" << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
+void
+AdjointSolve::assembleAdjointSystem(SparseMatrix<Number> & matrix,
+                                    const NumericVector<Number> & /*solution*/,
+                                    NumericVector<Number> & rhs)
+{
+
+  _problem.computeJacobian(*_nl_forward.currentSolution(), matrix, _forward_sys_num);
+
+  _problem.setCurrentNonlinearSystem(_adjoint_sys_num);
+  _problem.computeResidualTag(*_nl_adjoint.currentSolution(), rhs, _nl_adjoint.nonTimeVectorTag());
+  rhs.close();
+  rhs.scale(-1.0);
+}
+
+void
+AdjointSolve::applyNodalBCs(SparseMatrix<Number> & matrix,
+                            const NumericVector<Number> & solution,
+                            NumericVector<Number> & rhs)
+{
+  std::vector<dof_id_type> nbc_dofs;
+  auto & nbc_warehouse = _nl_forward.getNodalBCWarehouse();
+  if (nbc_warehouse.hasActiveObjects())
+  {
+    for (const auto & bnode : *_mesh.getBoundaryNodeRange())
+    {
+      BoundaryID boundary_id = bnode->_bnd_id;
+      Node * node = bnode->_node;
+
+      if (!nbc_warehouse.hasActiveBoundaryObjects(boundary_id) ||
+          node->processor_id() != processor_id())
+        continue;
+
+      for (const auto & bc : nbc_warehouse.getActiveBoundaryObjects(boundary_id))
+        if (bc->shouldApply())
+          for (unsigned int c = 0; c < bc->variable().count(); ++c)
+            nbc_dofs.push_back(node->dof_number(_forward_sys_num, bc->variable().number() + c, 0));
+    }
+
+    // Petsc has a nice interface for zeroing rows and columns, so we'll use it
+    auto petsc_matrix = dynamic_cast<PetscMatrix<Number> *>(&matrix);
+    auto petsc_solution = dynamic_cast<const PetscVector<Number> *>(&solution);
+    auto petsc_rhs = dynamic_cast<PetscVector<Number> *>(&rhs);
+    if (petsc_matrix && petsc_solution && petsc_rhs)
+      LibmeshPetscCall(MatZeroRowsColumns(petsc_matrix->mat(),
+                                          cast_int<PetscInt>(nbc_dofs.size()),
+                                          libMesh::numeric_petsc_cast(nbc_dofs.data()),
+                                          1.0,
+                                          petsc_solution->vec(),
+                                          petsc_rhs->vec()));
+    else
+      mooseError("Using PETSc matrices and vectors is required for applying homogenized boundary "
+                 "conditions.");
+  }
+}
+
+void
+AdjointSolve::checkIntegrity()
+{
+  const auto adj_vars = _nl_adjoint.getVariables(0);
+  for (const auto & adj_var : adj_vars)
+    // If the user supplies any scaling factors for individual variables the
+    // adjoint system won't be consistent.
+    if (!libMesh::absolute_fuzzy_equals(adj_var->scalingFactor(), 1.0))
+      mooseError(
+          "User cannot supply scaling factors for adjoint variables.   Adjoint system is scaled "
+          "automatically by the forward system.");
+
+  // Main thing is that the number of dofs in each system is the same
+  if (_nl_forward.system().n_dofs() != _nl_adjoint.system().n_dofs())
+    mooseError(
+        "The forward and adjoint systems do not seem to be the same size. This could be due to (1) "
+        "the number of variables added to each system is not the same, (2) variables do not have "
+        "consistent family/order, (3) variables do not have the same block restriction.");
+}

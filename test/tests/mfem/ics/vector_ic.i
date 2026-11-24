@@ -1,0 +1,130 @@
+[Mesh]
+  type = MFEMFileMesh
+  file = ../mesh/cylinder-hex-q2.gen
+[]
+
+[Problem]
+  type = MFEMProblem
+  solve = false
+[]
+
+[FESpaces]
+  [H1VectorFESpace]
+    type = MFEMVectorFESpace
+    fec_type = H1
+    fec_order = FIRST
+  []
+  [HCurlFESpace]
+    type = MFEMVectorFESpace
+    fec_type = ND
+    fec_order = FIRST
+  []
+  [HDivFESpace]
+    type = MFEMVectorFESpace
+    fec_type = RT
+    fec_order = CONSTANT
+  []
+  [L2VectorFESpace]
+    type = MFEMVectorFESpace
+    fec_type = L2
+    fec_order = CONSTANT
+    basis = GaussLegendre
+  []
+[]
+
+[Variables]
+  [h1_vector]
+    type = MFEMVariable
+    fespace = H1VectorFESpace
+  []
+  [nd_vector]
+    type = MFEMVariable
+    fespace = HCurlFESpace
+  []
+  [rt_vector]
+    type = MFEMVariable
+    fespace = HDivFESpace
+  []
+  [l2_vector]
+    type = MFEMVariable
+    fespace = L2VectorFESpace
+  []
+[]
+
+[Functions]
+  [external_vector_field]
+    type = ParsedVectorFunction
+    expression_x = 'sin(kappa * y)'
+    expression_y = 'sin(kappa * z)'
+    expression_z = 'sin(kappa * x)'
+
+    symbol_names = kappa
+    symbol_values = 3.1415926535
+  []
+[]
+
+[ICs]
+  [h1_vector_ic]
+    type = MFEMVectorIC
+    variable = h1_vector
+    vector_coefficient = external_vector_field
+  []
+  [l2_vector_ic]
+    type = MFEMVectorIC
+    variable = l2_vector
+    vector_coefficient = external_vector_field
+  []
+  [nd_vector_ic]
+    type = MFEMVectorIC
+    variable = nd_vector
+    vector_coefficient = external_vector_field
+  []
+  [rt_vector_ic]
+    type = MFEMVectorIC
+    variable = rt_vector
+    vector_coefficient = external_vector_field
+  []
+[]
+
+[Executioner]
+  type = MFEMSteady
+  device = cpu
+[]
+
+[VectorPostprocessors]
+  [line_sample_h1_vector]
+    type = MFEMVariableLineValueSampler
+    variables = 'h1_vector'
+    start_point = '-1 0 -0.5'
+    end_point = '1 0 0.5'
+    num_points = 101
+  []
+  [line_sample_nd_vector]
+    type = MFEMVariableLineValueSampler
+    variables = 'nd_vector'
+    start_point = '-0.99 -0.01 -0.49'
+    end_point = '0.99 0.01 0.49'
+    num_points = 114
+  []
+  [line_sample_rt_vector]
+    type = MFEMVariableLineValueSampler
+    variables = 'rt_vector'
+    start_point = '-0.99 -0.01 -0.49'
+    end_point = '0.99 0.01 0.49'
+    num_points = 114
+  []
+  [line_sample_l2_vector]
+    type = MFEMVariableLineValueSampler
+    variables = 'l2_vector'
+    start_point = '-0.99 -0.01 -0.49'
+    end_point = '0.99 0.01 0.49'
+    num_points = 114
+  []
+[]
+
+[Outputs]
+  [CSV]
+    type = CSV
+    file_base = OutputData/VectorIC/vector_ic
+  []
+[]

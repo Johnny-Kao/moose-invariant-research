@@ -1,0 +1,10 @@
+directories:
+    - ${MOOSE_DIR}/modules/phase_field/test/tests
+    - ${MOOSE_DIR}/modules/phase_field/unit/src
+specs:
+    - tests
+    - '*.unit_tests'
+dependencies:
+    - framework
+repo: moose
+reports: !include ${MOOSE_DIR}/modules/phase_field/doc/sqa_reports.yml

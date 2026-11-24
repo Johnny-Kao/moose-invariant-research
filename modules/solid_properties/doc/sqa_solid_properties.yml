@@ -1,0 +1,11 @@
+directories:
+    - ${MOOSE_DIR}/modules/solid_properties/test/tests
+    - ${MOOSE_DIR}/modules/solid_properties/unit/src
+specs:
+    - tests
+    - '*.unit_tests'
+dependencies:
+    - framework
+repos:
+    default: https://github.com/idaholab/moose
+reports: !include ${MOOSE_DIR}/modules/solid_properties/doc/sqa_reports.yml

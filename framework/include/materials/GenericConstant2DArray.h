@@ -1,0 +1,40 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#pragma once
+
+#include "Material.h"
+#include "VariableSizeMaterialPropertiesInterface.h"
+
+/**
+ * Template for defining a constant array material property, using automatic differentiation or not
+ */
+template <bool is_ad>
+class GenericConstant2DArrayTempl : public Material, public VariableSizeMaterialPropertiesInterface
+{
+public:
+  static InputParameters validParams();
+
+  GenericConstant2DArrayTempl(const InputParameters & parameters);
+
+  virtual std::pair<std::size_t, std::size_t>
+  getMatrixPropertySize(const MaterialPropertyName & prop_name) const override;
+
+protected:
+  virtual void initQpStatefulProperties() override;
+  virtual void computeQpProperties() override;
+
+  std::string _prop_name;
+  const RealEigenMatrix & _prop_value;
+
+  GenericMaterialProperty<RealEigenMatrix, is_ad> & _property;
+};
+
+typedef GenericConstant2DArrayTempl<false> GenericConstant2DArray;
+typedef GenericConstant2DArrayTempl<true> ADGenericConstant2DArray;

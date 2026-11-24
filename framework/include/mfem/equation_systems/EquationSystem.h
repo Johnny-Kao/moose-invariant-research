@@ -1,0 +1,414 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#ifdef MOOSE_MFEM_ENABLED
+
+#pragma once
+
+#include "libmesh/ignore_warnings.h"
+#include "mfem/miniapps/common/pfem_extras.hpp"
+#include "libmesh/restore_warnings.h"
+#include "MFEMIntegratedBC.h"
+#include "MFEMEssentialBC.h"
+#include "MFEMContainers.h"
+#include "MFEMKernel.h"
+#include "MFEMMixedBilinearFormKernel.h"
+#include "ScaleIntegrator.h"
+#include "NLScaleIntegrator.h"
+
+namespace Moose::MFEM
+{
+class CoefficientManager;
+
+/**
+ * Owns the weak-form mathematics of a MOOSE MFEM problem.
+ *
+ * An EquationSystem stores weak-form components (bilinear, linear, mixed-bilinear,
+ * and nonlinear forms) contributed by kernels and boundary conditions.  It forms the
+ * constrained linear part, keeps nonlinear action forms for residual/Jacobian
+ * evaluation, and exposes the solve interface as an mfem::Operator.  It is responsible
+ * for applying essential-DoF constraints and propagating either itself or the assembled
+ * linear operator (and bilinear form, for LOR) to the configured solver tree.
+ *
+ * EquationSystem is *not* responsible for grid-function bookkeeping, time stepping, or
+ * solver selection - those belong to the ProblemOperator layer.
+ *
+ * @see ProblemOperatorBase for the conceptual split between the two layers.
+ */
+class EquationSystem : public mfem::Operator
+{
+
+public:
+  EquationSystem() = default;
+  ~EquationSystem() override;
+
+  /// Add kernels.
+  virtual void AddKernel(std::shared_ptr<MFEMKernel> kernel);
+  virtual void AddIntegratedBC(std::shared_ptr<MFEMIntegratedBC> kernel);
+  /// Add BC associated with essentially constrained DoFs on boundaries.
+  virtual void AddEssentialBC(std::shared_ptr<MFEMEssentialBC> bc);
+
+  /// Initialise
+  virtual void Init(GridFunctions & gridfunctions,
+                    ComplexGridFunctions & cmplx_gridfunctions,
+                    mfem::AssemblyLevel assembly_level);
+  /**
+   * Build all weak-form components via BuildEquationSystem(), form the constrained linear part of
+   * the system, and populate the true-DoF vectors used by the solve.
+   *
+   * For nonlinear problems, nonlinear forms are registered here but are not folded into the
+   * assembled linear operator. Their residual action is evaluated by Mult(), and any Jacobian
+   * contribution is formed at the current nonlinear iterate by GetGradient().
+   *
+   * This is the single public entry point for callers that want the equation system prepared for a
+   * solve. Subclasses customize the form-building step by overriding BuildEquationSystem().
+   */
+  void FormSystem(mfem::BlockVector & trueX, mfem::BlockVector & trueRHS);
+  /// Compute residual y = Mu
+  void Mult(const mfem::Vector & u, mfem::Vector & residual) const override;
+  /// Compute the contribution to the residual from nonlinear forms only.
+  virtual void ComputeNonlinearResidual(const mfem::Vector & u, mfem::Vector & residual) const;
+  /// Get Jacobian at the provided vector of true DoFs of trial variables
+  mfem::Operator & GetGradient(const mfem::Vector & u) const override;
+  /// Get operator handle for linear component of system operator
+  mfem::OperatorHandle & GetLinearOperator() const { return _linear_operator; };
+
+  /// Update variable from solution vector after solve
+  virtual void SetTrialVariablesFromTrueVectors(const mfem::BlockVector & trueX) const;
+
+  /// Set whether an external object (such as a nonlinear solver) requires Jacobian information for this EquationSystem.
+  void SetGradientRequired(bool requires_gradient) { _gradient_required = requires_gradient; }
+
+  /// Set the coefficient manager to notify when trial variables are updated, so that stored
+  /// projections of solution-dependent coefficients are invalidated.
+  void SetCoefficientManager(CoefficientManager & coefficients)
+  {
+    _coefficient_manager = &coefficients;
+  }
+
+  // Test variables are associated with linear forms,
+  // whereas trial variables are associated with gridfunctions.
+  const std::vector<std::string> & GetTrialVarNames() const { return _trial_var_names; }
+  const std::vector<std::string> & GetTestVarNames() const { return _test_var_names; }
+
+  /// Getter for block true offsets associated with the EquationSystem operator
+  const mfem::Array<int> & GetBlockOffsets() const { return _block_true_offsets; }
+
+  /**
+   * @returns a reference to the MFEM ParBilinearForm corresponding to test_var_name
+   */
+  mfem::ParBilinearForm & GetBilinearForm(const std::string & test_var_name)
+  {
+    return _blfs.GetRef(test_var_name);
+  }
+
+  /**
+   * @returns a reference to the MFEM ParGridFunction corresponding to trial_var_name
+   */
+  mfem::ParGridFunction & GetGridFunction(const std::string & trial_var_name)
+  {
+    return _gfuncs->GetRef(trial_var_name);
+  }
+
+  /// The true-DoF vector used for the most recent Jacobian linearization.
+  const mfem::Vector & GetLinearizationPoint() const;
+
+  /**
+   * Build a fresh ParBilinearForm on the given FESpace using the same kernels as the main
+   * system's bilinear form for var_name. Caller owns the returned form.
+   */
+  std::shared_ptr<mfem::ParBilinearForm>
+  BuildBilinearFormForFESpace(const std::string & var_name,
+                              mfem::ParFiniteElementSpace & fespace,
+                              mfem::AssemblyLevel assembly_level);
+
+  /**
+   * Build a fresh ParNonlinearForm on the given FESpace using the same kernels as the main
+   * system's nonlinear form for var_name. Caller owns the returned form.
+   */
+  std::shared_ptr<mfem::ParNonlinearForm>
+  BuildNonlinearFormForFESpace(const std::string & var_name,
+                               mfem::ParFiniteElementSpace & fespace,
+                               mfem::AssemblyLevel assembly_level);
+
+  /**
+   * Return the essential boundary attribute marker array for a given trial variable.
+   * The returned array has size == pmesh.bdr_attributes.Max() with 1 at essential boundaries.
+   */
+  mfem::Array<int> & GetEssentialBoundaryMarkers(const std::string & var_name);
+
+  /// @returns Whether this EquationSystem includes complex components
+  virtual bool IsComplex() const { return false; }
+  /// @returns Whether this EquationSystem represents an eigenproblem
+  virtual bool IsEigen() const { return false; }
+  /// @returns Whether this EquationSystem has time-dependent components
+  virtual bool IsTimeDependent() const { return false; }
+  /// @returns Whether this is a multivariate (maybe mixed) equation system
+  bool IsMultivariate() const { return _test_var_names.size() > 1; }
+  /// @returns Whether nonlinear integrators are present in the equation system
+  bool IsNonlinear() const { return _non_linear; }
+
+  /// Build all forms comprising this EquationSystem
+  virtual void BuildEquationSystem();
+
+protected:
+  /// Add coupled variable to EquationSystem.
+  virtual void AddCoupledVariableNameIfMissing(const std::string & coupled_var_name);
+  /// Add eliminated variable to EquationSystem.
+  virtual void AddEliminatedVariableNameIfMissing(const std::string & eliminated_var_name);
+  /// Add test variable to EquationSystem.
+  virtual void AddTestVariableNameIfMissing(const std::string & test_var_name);
+  /// Set trial variable names from subset of coupled variables that have an associated test variable.
+  virtual void SetTrialVariableNames();
+
+  /// Deletes the HypreParMatrix associated with any pointer stored in _h_blocks,
+  /// and then proceeds to delete all dynamically allocated memory for _h_blocks
+  /// itself, resetting all dimensions to zero.
+  void DeleteHBlocks();
+
+  /// Deletes the HypreParMatrix associated with any pointer stored in _jacobian_blocks,
+  /// and then proceeds to delete all dynamically allocated memory for _jacobian_blocks
+  /// itself, resetting all dimensions to zero.
+  void DeleteJacobianBlocks();
+
+  bool VectorContainsName(const std::vector<std::string> & the_vector,
+                          const std::string & name) const;
+
+  /// Apply essential BC(s) associated with var_name to set true DoFs of trial_gf and update
+  /// markers of all essential boundaries
+  virtual void ApplyEssentialBC(const std::string & var_name,
+                                mfem::ParGridFunction & trial_gf,
+                                mfem::Array<int> & global_ess_markers);
+  /// Update all essentially constrained true DoF markers and values on boundaries
+  virtual void ApplyEssentialBCs();
+  /// Perform trivial eliminations of coupled variables lacking corresponding test variables
+  virtual void EliminateCoupledVariables();
+  /// Build linear forms and eliminate constrained DoFs
+  virtual void BuildLinearForms();
+  /// Build non-linear action forms
+  virtual void BuildNonlinearForms();
+  /// Build bilinear forms (diagonal Jacobian contributions)
+  virtual void BuildBilinearForms();
+  /// Build mixed bilinear forms (off-diagonal Jacobian contributions)
+  virtual void BuildMixedBilinearForms();
+
+  /// Form linear components of system based on on- and off-diagonal bilinear form
+  /// contributions, populate solution and RHS vectors of true DoFs, and apply constraints.
+  virtual void FormLinearSystem(mfem::OperatorHandle & op,
+                                mfem::BlockVector & trueX,
+                                mfem::BlockVector & trueRHS);
+  using mfem::Operator::FormSystemOperator;
+  /// Form matrix-free representation of linear components of system operator.
+  /// Used when EquationSystem assembly level is set to 'FULL', 'ELEMENT', 'PARTIAL', or 'NONE'.
+  virtual void FormSystemOperator(mfem::OperatorHandle & op,
+                                  mfem::BlockVector & trueX,
+                                  mfem::BlockVector & trueRHS);
+  /// Form matrix representation of linear components of system operator as a HypreParMatrix.
+  /// Used when EquationSystem assembly level is set to 'LEGACY'.
+  virtual void FormSystemMatrix(mfem::OperatorHandle & op,
+                                mfem::BlockVector & trueX,
+                                mfem::BlockVector & trueRHS);
+  /// Compute Jacobian matrix at the provided vector of true DoFs of trial variables
+  void FormJacobianMatrix(const mfem::Vector & u);
+
+  /**
+   * Template method for applying BilinearFormIntegrators on domains from kernels to a BilinearForm,
+   * or MixedBilinearForm
+   */
+  template <class FormType>
+  void ApplyDomainBLFIntegrators(
+      const std::string & trial_var_name,
+      const std::string & test_var_name,
+      std::shared_ptr<FormType> form,
+      NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMKernel>>>> & kernels_map,
+      std::optional<mfem::real_t> scale_factor = std::nullopt);
+
+  /**
+   * Apply domain LinearFormIntegrators from kernels to the linear form associated with the
+   * supplied test variable.
+   */
+  void ApplyDomainLFIntegrators(
+      const std::string & test_var_name,
+      std::shared_ptr<mfem::ParLinearForm> form,
+      NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMKernel>>>> & kernels_map);
+
+  /**
+   * Apply domain NonlinearFormIntegrators from kernels to the nonlinear form associated with the
+   * supplied test variable.
+   */
+  void ApplyDomainNLFIntegrators(
+      const std::string & test_var_name,
+      std::shared_ptr<mfem::ParNonlinearForm> form,
+      NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMKernel>>>> & kernels_map,
+      std::optional<mfem::real_t> scale_factor = std::nullopt);
+
+  /**
+   * Template method for applying BilinearFormIntegrators on boundaries from integrated boundary
+   * conditions to a BilinearForm, or MixedBilinearForm.
+   */
+  template <class FormType>
+  void ApplyBoundaryBLFIntegrators(
+      const std::string & trial_var_name,
+      const std::string & test_var_name,
+      std::shared_ptr<FormType> form,
+      NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMIntegratedBC>>>> &
+          integrated_bc_map,
+      std::optional<mfem::real_t> scale_factor = std::nullopt);
+
+  /**
+   * Apply boundary LinearFormIntegrators from integrated boundary conditions to the linear form
+   * associated with the supplied test variable.
+   */
+  void ApplyBoundaryLFIntegrators(
+      const std::string & test_var_name,
+      std::shared_ptr<mfem::ParLinearForm> form,
+      NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMIntegratedBC>>>> &
+          integrated_bc_map);
+
+  /**
+   * Apply boundary NonlinearFormIntegrators from integrated boundary conditions to the nonlinear
+   * form associated with the supplied test variable.
+   */
+  void ApplyBoundaryNLFIntegrators(
+      const std::string & test_var_name,
+      std::shared_ptr<mfem::ParNonlinearForm> form,
+      NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMIntegratedBC>>>> &
+          integrated_bc_map,
+      std::optional<mfem::real_t> scale_factor = std::nullopt);
+
+  /// Names of all trial variables of kernels and boundary conditions
+  /// added to this EquationSystem.
+  std::vector<std::string> _coupled_var_names;
+  /// Subset of _coupled_var_names of all variables corresponding to gridfunctions with degrees of
+  /// freedom that comprise the state vector of this EquationSystem. This will differ from
+  /// _coupled_var_names when time derivatives or other eliminated variables are present.
+  std::vector<std::string> _trial_var_names;
+  /// Names of all coupled variables without a corresponding test variable.
+  std::vector<std::string> _eliminated_var_names;
+  /// Pointers to coupled variables not part of the reduced EquationSystem.
+  Moose::MFEM::GridFunctions _eliminated_variables;
+  /// Names of all test variables corresponding to linear forms in this equation system
+  std::vector<std::string> _test_var_names;
+  /// Pointers to finite element spaces associated with test variables.
+  std::vector<mfem::ParFiniteElementSpace *> _test_pfespaces;
+  /// Pointers to finite element spaces associated with coupled variables.
+  std::vector<mfem::ParFiniteElementSpace *> _coupled_pfespaces;
+
+  // Components of weak form, named according to test variable
+  NamedFieldsMap<mfem::ParBilinearForm> _blfs;
+  NamedFieldsMap<mfem::ParLinearForm> _lfs;
+  NamedFieldsMap<mfem::ParNonlinearForm> _nlfs;
+  NamedFieldsMap<NamedFieldsMap<mfem::ParMixedBilinearForm>> _mblfs; // named according to trial var
+
+  /// Gridfunctions holding essential constraints from Dirichlet BCs
+  std::vector<std::unique_ptr<mfem::ParGridFunction>> _var_ess_constraints;
+  std::vector<mfem::Array<int>> _ess_tdof_lists;
+  std::vector<mfem::Array<int>> _ess_markers;
+
+  mfem::Array2D<const mfem::HypreParMatrix *> _h_blocks, _jacobian_blocks;
+  /// Arrays to store kernels to act on each component of weak form.
+  /// Named according to test and trial variables.
+  NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMKernel>>>> _kernels_map;
+  /// Arrays to store integrated BCs to act on each component of weak form.
+  /// Named according to test and trial variables.
+  NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMIntegratedBC>>>> _integrated_bc_map;
+  /// Arrays to store essential BCs to act on each component of weak form.
+  /// Named according to test variable.
+  NamedFieldsMap<std::vector<std::shared_ptr<MFEMEssentialBC>>> _essential_bc_map;
+
+  // Operator handle for the jacobian
+  mutable mfem::OperatorHandle _jacobian;
+  // Operator handle for the linear components of the system operator
+  mutable mfem::OperatorHandle _linear_operator;
+  mfem::AssemblyLevel _assembly_level;
+
+  // Pointer to GridFunctions to enable updates during nonlinear iterations
+  Moose::MFEM::GridFunctions * _gfuncs;
+  // Array storing block offsets of solution and residual vector
+  mfem::Array<int> _block_true_offsets;
+  // Non-owning pointer to the vector passed into the most recent GetGradient() call.
+  mutable const mfem::Vector * _linearization_point = nullptr;
+  // Boolean indicating if EquationSystem contains nonlinear integrators
+  bool _non_linear = false;
+  // Whether an external object (e.g. solver) requires Jacobian/gradient information.
+  bool _gradient_required = false;
+  // Coefficient manager notified when trial variables are updated, so that stored projections
+  // of solution-dependent coefficients are invalidated.
+  CoefficientManager * _coefficient_manager = nullptr;
+
+private:
+  /// Disallowed inherited method
+  using mfem::Operator::RecoverFEMSolution;
+};
+
+template <class FormType>
+void
+EquationSystem::ApplyDomainBLFIntegrators(
+    const std::string & trial_var_name,
+    const std::string & test_var_name,
+    std::shared_ptr<FormType> form,
+    NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMKernel>>>> & kernels_map,
+    std::optional<mfem::real_t> scale_factor)
+{
+  if (kernels_map.Has(test_var_name) && kernels_map.Get(test_var_name)->Has(trial_var_name))
+  {
+    auto kernels = kernels_map.GetRef(test_var_name).GetRef(trial_var_name);
+    for (auto & kernel : kernels)
+    {
+      mfem::BilinearFormIntegrator * integ = kernel->createBFIntegrator();
+
+      if (integ)
+      {
+        if (scale_factor.has_value())
+          integ = new ScaleIntegrator(integ, scale_factor.value(), true);
+        kernel->isDGKernel() ? form->AddInteriorFaceIntegrator(std::move(integ))
+        : kernel->isSubdomainRestricted()
+            ? form->AddDomainIntegrator(std::move(integ), kernel->getSubdomainMarkers())
+            : form->AddDomainIntegrator(std::move(integ));
+      }
+    }
+  }
+}
+
+template <class FormType>
+void
+EquationSystem::ApplyBoundaryBLFIntegrators(
+    const std::string & trial_var_name,
+    const std::string & test_var_name,
+    std::shared_ptr<FormType> form,
+    NamedFieldsMap<NamedFieldsMap<std::vector<std::shared_ptr<MFEMIntegratedBC>>>> &
+        integrated_bc_map,
+    std::optional<mfem::real_t> scale_factor)
+{
+  if (integrated_bc_map.Has(test_var_name) &&
+      integrated_bc_map.Get(test_var_name)->Has(trial_var_name))
+  {
+    auto bcs = integrated_bc_map.GetRef(test_var_name).GetRef(trial_var_name);
+    for (auto & bc : bcs)
+    {
+      mfem::BilinearFormIntegrator * integ = bc->createBFIntegrator();
+
+      if (integ)
+      {
+        if (scale_factor.has_value())
+          integ = new ScaleIntegrator(integ, scale_factor.value(), true);
+        bc->isDGBC() ? bc->isBoundaryRestricted()
+                           ? form->AddBdrFaceIntegrator(std::move(integ), bc->getBoundaryMarkers())
+                           : form->AddBdrFaceIntegrator(std::move(integ))
+        : bc->isBoundaryRestricted()
+            ? form->AddBoundaryIntegrator(std::move(integ), bc->getBoundaryMarkers())
+            : form->AddBoundaryIntegrator(std::move(integ));
+      }
+    }
+  }
+}
+
+} // namespace Moose::MFEM
+
+#endif

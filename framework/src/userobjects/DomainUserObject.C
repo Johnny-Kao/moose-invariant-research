@@ -1,0 +1,181 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "DomainUserObject.h"
+#include "MooseMeshUtils.h"
+#include "MooseVariableFE.h"
+#include "SubProblem.h"
+#include "Assembly.h"
+
+#include <algorithm>
+#include <iterator>
+
+InputParameters
+DomainUserObject::validParams()
+{
+  InputParameters params = UserObject::validParams();
+  params += BlockRestrictable::validParams();
+  params += ThreeMaterialPropertyInterface::validParams();
+  params += TransientInterface::validParams();
+  params += RandomInterface::validParams();
+  params.addParam<std::vector<BoundaryName>>(
+      "interface_boundaries",
+      "The boundary IDs on which this object will perform interface evaluations. Each selected "
+      "side must have a neighbor. The same boundary, whether specified by name or ID, cannot also "
+      "be listed in 'boundaries'. If unset, interface evaluations are not performed.");
+  params.addParam<std::vector<BoundaryName>>(
+      "boundaries",
+      "The boundary IDs on which this object will perform boundary evaluations. A selected side "
+      "may or may not have a neighbor. The same boundary, whether specified by name or ID, cannot "
+      "also be listed in 'interface_boundaries'. If unset, boundary execution is unrestricted "
+      "except on selected interface boundaries. An explicitly empty list disables boundary "
+      "evaluations.");
+  // Need one layer of ghosting
+  params.addRelationshipManager("ElementSideNeighborLayers",
+                                Moose::RelationshipManagerType::GEOMETRIC |
+                                    Moose::RelationshipManagerType::ALGEBRAIC);
+  return params;
+}
+
+DomainUserObject::DomainUserObject(const InputParameters & parameters)
+  : UserObject(parameters),
+    BlockRestrictable(this),
+    ThreeMaterialPropertyInterface(this, blockIDs(), Moose::EMPTY_BOUNDARY_IDS),
+    NeighborCoupleableMooseVariableDependencyIntermediateInterface(this, false, false),
+    TransientInterface(this),
+    RandomInterface(parameters, _fe_problem, _tid, false),
+    ElementIDInterface(this),
+    _mesh(_subproblem.mesh()),
+    _current_elem(_assembly.elem()),
+    _current_elem_volume(_assembly.elemVolume()),
+    _current_side(_assembly.side()),
+    _current_side_elem(_assembly.sideElem()),
+    _current_side_volume(_assembly.sideElemVolume()),
+    _neighbor_elem(_assembly.neighbor()),
+    _current_neighbor_volume(_assembly.neighborVolume()),
+    _current_boundary_id(_assembly.currentBoundaryID()),
+    _normals(_assembly.normals()),
+    _boundary_restricted(isParamValid("boundaries")),
+    _q_point(_assembly.qPoints()),
+    _qrule(_assembly.qRule()),
+    _JxW(_assembly.JxW()),
+    _q_point_face(_assembly.qPointsFace()),
+    _qrule_face(_assembly.qRuleFace()),
+    _JxW_face(_assembly.JxWFace()),
+    _coord(_assembly.coordTransformation())
+{
+  // Check whether the user object is boundary restricted and if so, get the boundary IDs
+  if (_boundary_restricted)
+  {
+    // Catch misspelled or otherwise nonexistent boundary names here rather than letting them
+    // silently resolve to an invalid boundary ID and disable executeOnBoundary().
+    const auto & boundary_names = getParam<std::vector<BoundaryName>>("boundaries");
+    for (const auto & boundary_name : boundary_names)
+      if (!boundary_name.empty() && !MooseUtils::isDigits(boundary_name) &&
+          !MooseMeshUtils::hasBoundaryName(_mesh, boundary_name))
+        paramError("boundaries", "Boundary '", boundary_name, "' does not exist in the mesh.");
+    _boundary_execution_ids = MooseMeshUtils::getBoundaryIDSet(_mesh, boundary_names, false);
+  }
+
+  if (isParamValid("interface_boundaries"))
+  {
+    // Check whether the user object is restricted to interface boundaries and if so, get the
+    // boundary IDs
+    const auto & interface_boundaries = getParam<std::vector<BoundaryName>>("interface_boundaries");
+    for (const auto & boundary_name : interface_boundaries)
+      if (!boundary_name.empty() && !MooseUtils::isDigits(boundary_name) &&
+          !MooseMeshUtils::hasBoundaryName(_mesh, boundary_name))
+        paramError(
+            "interface_boundaries", "Boundary '", boundary_name, "' does not exist in the mesh.");
+    _interface_bnd_ids = MooseMeshUtils::getBoundaryIDSet(_mesh, interface_boundaries, false);
+
+    // Check that the user has not selected the same boundary for both boundary and interface
+    // execution.
+    std::vector<BoundaryID> overlapping_ids;
+    std::set_intersection(_boundary_execution_ids.begin(),
+                          _boundary_execution_ids.end(),
+                          _interface_bnd_ids.begin(),
+                          _interface_bnd_ids.end(),
+                          std::back_inserter(overlapping_ids));
+    if (!overlapping_ids.empty())
+      paramError("interface_boundaries",
+                 "Boundary IDs ",
+                 Moose::stringify(overlapping_ids),
+                 " cannot be selected by both boundaries and interface_boundaries.");
+
+    for (const auto interface_bnd_id : _interface_bnd_ids)
+    {
+      // check on which side the interface is connected with the subdomain of this domain user
+      // object
+      const auto & primary_connected_blocks = _mesh.getBoundaryConnectedBlocks(interface_bnd_id);
+      const auto & secondary_connected_blocks =
+          _mesh.getBoundaryConnectedSecondaryBlocks(interface_bnd_id);
+      bool has_full_primary_connection = true;
+      for (const auto interface_connected_block : primary_connected_blocks)
+        if (!hasBlocks(interface_connected_block))
+          has_full_primary_connection = false;
+
+      bool has_full_secondary_connection = true;
+      for (const auto interface_connected_block : secondary_connected_blocks)
+        if (!hasBlocks(interface_connected_block))
+          has_full_secondary_connection = false;
+
+      // we push the subdomains on the other side for the interface
+      if (has_full_primary_connection)
+        _interface_connected_blocks[interface_bnd_id] = secondary_connected_blocks;
+      else if (has_full_secondary_connection)
+        _interface_connected_blocks[interface_bnd_id] = primary_connected_blocks;
+      else
+        paramError("interface_boundaries",
+                   "Not all sides in the interface with ID ",
+                   interface_bnd_id,
+                   " is connected with the domain of the domain user object ",
+                   name());
+    }
+  }
+}
+
+const MooseVariableFieldBase *
+DomainUserObject::getInterfaceFieldVar(const std::string & var_name,
+                                       const unsigned int comp,
+                                       const std::set<BoundaryID> * interfaces)
+{
+  const auto * const field_var = getFieldVar(var_name, comp);
+  mooseAssert(field_var, "We should not be able to return a null variable");
+  if (interfaces)
+    _var_interfaces[field_var->name()] = *interfaces;
+  else
+    _var_interfaces[field_var->name()] = _interface_bnd_ids;
+  return field_var;
+}
+
+void
+DomainUserObject::checkVariable(const MooseVariableBase & variable) const
+{
+  auto it = _var_interfaces.find(variable.name());
+  if (it != _var_interfaces.end())
+  {
+    // we could have done this check in the constructor but to be consistent with other block
+    // restrictable checks, we'll do it here
+    auto & bnd_ids = it->second;
+    for (const auto bnd_id : bnd_ids)
+    {
+      const auto & connected_blocks = libmesh_map_find(_interface_connected_blocks, bnd_id);
+      for (const auto & bid : connected_blocks)
+        if (!variable.hasBlocks(bid))
+          mooseError("Variable '",
+                     variable.name(),
+                     "' is not defined on the interface connected block '",
+                     _mesh.getSubdomainName(bid),
+                     "'");
+    }
+  }
+  else
+    BlockRestrictable::checkVariable(variable);
+}

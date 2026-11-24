@@ -1,0 +1,11 @@
+directories:
+    - ${MOOSE_DIR}/modules/electromagnetics/test/tests
+    - ${MOOSE_DIR}/modules/electromagnetics/unit/src
+specs:
+    - tests
+    - '*.unit_tests'
+dependencies:
+    - framework
+repos:
+    default: https://github.com/idaholab/moose
+reports: !include ${MOOSE_DIR}/modules/electromagnetics/doc/sqa_reports.yml

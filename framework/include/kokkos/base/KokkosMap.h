@@ -1,0 +1,366 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#pragma once
+
+#ifdef MOOSE_KOKKOS_SCOPE
+#include "Kokkos_Functional.hpp"
+#endif
+
+#include "KokkosArray.h"
+
+#include <memory>
+#include <map>
+#include <limits>
+
+namespace Moose::Kokkos
+{
+
+#ifdef MOOSE_KOKKOS_SCOPE
+/**
+ * Hash a key for the device hash table using the MurmurHash3 implementation of Kokkos, which
+ * hashes the object representation of the key
+ * @param key The key
+ * @param seed The hash seed
+ * @returns The 32-bit hash
+ */
+template <typename T>
+KOKKOS_FUNCTION uint32_t
+hashKey(const T & key, uint32_t seed = 0)
+{
+  return ::Kokkos::pod_hash<T>()(key, seed);
+}
+
+template <typename T1, typename T2>
+struct Pair;
+
+/**
+ * Hash a pair member by member so that padding bytes between the members do not contribute
+ */
+template <typename T1, typename T2>
+KOKKOS_FUNCTION uint32_t
+hashKey(const Pair<T1, T2> & key, uint32_t seed = 0)
+{
+  return hashKey(key.second, hashKey(key.first, seed));
+}
+#endif
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+class MapBase;
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void dataStore(std::ostream & stream, MapBase<T1, T2, index_type, MapType> & map, void * context);
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void dataLoad(std::istream & stream, MapBase<T1, T2, index_type, MapType> & map, void * context);
+
+/**
+ * The Kokkos wrapper class for standard map.
+ * The map can only be populated on host.
+ * Make sure to call copyToDevice() or copyToDeviceNested() after populating the map on host.
+ */
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+class MapBase
+{
+public:
+  /**
+   * Get the beginning writeable iterator of the host map
+   * @returns The beginning iterator
+   */
+  auto begin() { return get().begin(); }
+  /**
+   * Get the beginning const iterator of the host map
+   * @returns The beginning iterator
+   */
+  auto begin() const { return get().cbegin(); }
+  /**
+   * Get the end writeable iterator of the host map
+   * @returns The end iterator
+   */
+  auto end() { return get().end(); }
+  /**
+   * Get the end const iterator of the host map
+   * @returns The end iterator
+   */
+  auto end() const { return get().cend(); }
+  /**
+   * Get the underlying writeable host map
+   * @returns The writeable host map
+   */
+  auto & get()
+  {
+    if (!_map_host)
+      _map_host = std::make_shared<MapType<T1, T2>>();
+
+    return *_map_host;
+  }
+  /**
+   * Get the underlying const host map
+   * @returns The const host map
+   */
+  const auto & get() const
+  {
+    if (!_map_host)
+      _map_host = std::make_shared<MapType<T1, T2>>();
+
+    return *_map_host;
+  }
+  /**
+   * Clear the underlying data
+   */
+  void clear();
+  /**
+   * Call host map's operator[]
+   * @param key The key
+   * @returns The writeable reference of the value
+   */
+  T2 & operator[](const T1 & key) { return get()[key]; }
+
+#ifdef MOOSE_KOKKOS_SCOPE
+  /**
+   * Copy host map to device
+   */
+  void copyToDevice();
+  /**
+   * Copy host map to device, perform nested copy for Kokkos arrays
+   */
+  void copyToDeviceNested();
+  /**
+   * Swap with another Kokkos map
+   * @param map The Kokkos map to be swapped
+   */
+  void swap(MapBase<T1, T2, index_type, MapType> & map);
+
+  /**
+   * Get the size of map
+   * @returns The size of map
+   */
+  KOKKOS_FUNCTION index_type size() const
+  {
+    KOKKOS_IF_ON_HOST(return get().size();)
+
+    return _keys.size();
+  }
+  /**
+   * Find the index of a key
+   * @param key The key
+   * @returns The index of the key, invalid_id if the key does not exist
+   */
+  KOKKOS_FUNCTION index_type find(const T1 & key) const;
+  /**
+   * Get whether a key exists
+   * @param key The key
+   * @returns Whether the key exists
+   */
+  KOKKOS_FUNCTION bool exists(const T1 & key) const { return find(key) != invalid_id; }
+  /**
+   * Get the key of an index
+   * @param idx The index returned by find()
+   * @returns The const reference of the key
+   */
+  KOKKOS_FUNCTION const T1 & key(index_type idx) const
+  {
+    KOKKOS_ASSERT(idx != invalid_id);
+
+    return _keys[idx];
+  }
+  /**
+   * Get the value of an index
+   * @param idx The index returned by find()
+   * @returns The const reference of the value
+   */
+  KOKKOS_FUNCTION const T2 & value(index_type idx) const
+  {
+    KOKKOS_ASSERT(idx != invalid_id);
+
+    return _values[idx];
+  }
+  /**
+   * Get the value corresponding to a key
+   * @param key The key
+   * @returns The const reference of the value
+   */
+  ///@{
+  KOKKOS_FUNCTION const T2 & operator[](const T1 & key) const
+  {
+    KOKKOS_IF_ON_HOST(return get().at(key);)
+
+    auto idx = find(key);
+
+    KOKKOS_ASSERT(idx != invalid_id);
+
+    return _values[idx];
+  }
+  // Due to a stupid NVCC compiler bug, one cannot do var[i][j] for a variable whose type is
+  // Array<Map<...>> (the second operator[] seems to be interpreted as if it is the operator of
+  // Array), while var[i](j) works. Until we figure out what is going on, one can use the following
+  // operator as a workaround.
+  KOKKOS_FUNCTION const T2 & operator()(const T1 & key) const { return operator[](key); }
+  ///@}
+#endif
+
+  static constexpr index_type invalid_id = std::numeric_limits<index_type>::max();
+
+private:
+#ifdef MOOSE_KOKKOS_SCOPE
+  /**
+   * Internal method to copy host map to device
+   */
+  void copy();
+#endif
+
+  /**
+   * Standard map on host
+   * Stored as a shared pointer to avoid deep copy
+   */
+  mutable std::shared_ptr<MapType<T1, T2>> _map_host;
+  /**
+   * Keys on device
+   */
+  Array<T1, 1, index_type> _keys;
+  /**
+   * Values on device
+   */
+  Array<T2, 1, index_type> _values;
+  /**
+   * Beginning offset into device arrays of each bucket
+   */
+  Array<index_type, 1, index_type> _offset;
+
+  friend void dataStore<T1, T2, index_type, MapType>(std::ostream &,
+                                                     MapBase<T1, T2, index_type, MapType> &,
+                                                     void *);
+  friend void dataLoad<T1, T2, index_type, MapType>(std::istream &,
+                                                    MapBase<T1, T2, index_type, MapType> &,
+                                                    void *);
+};
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void
+MapBase<T1, T2, index_type, MapType>::clear()
+{
+  get().clear();
+
+  _keys.destroy();
+  _values.destroy();
+  _offset.destroy();
+}
+
+#ifdef MOOSE_KOKKOS_SCOPE
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void
+MapBase<T1, T2, index_type, MapType>::copy()
+{
+  _keys.create(size());
+  _values.create(size());
+  _offset.create(size() + 1);
+  _offset = 0;
+
+  for (const auto & [key, value] : get())
+  {
+    auto bucket = hashKey(key) % size();
+
+    _offset[bucket]++;
+  }
+
+  std::exclusive_scan(_offset.begin(), _offset.end(), _offset.begin(), index_type(0));
+
+  _offset.copyToDevice();
+
+  std::vector<index_type> idx(size(), 0);
+
+  for (const auto & [key, value] : get())
+  {
+    auto bucket = hashKey(key) % size();
+
+    _keys[_offset[bucket] + idx[bucket]] = key;
+    _values[_offset[bucket] + idx[bucket]] = value;
+    idx[bucket]++;
+  }
+}
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void
+MapBase<T1, T2, index_type, MapType>::copyToDevice()
+{
+  copy();
+
+  _keys.copyToDevice();
+  _values.copyToDevice();
+}
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void
+MapBase<T1, T2, index_type, MapType>::copyToDeviceNested()
+{
+  copy();
+
+  _keys.copyToDeviceNested();
+  _values.copyToDeviceNested();
+}
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void
+MapBase<T1, T2, index_type, MapType>::swap(MapBase<T1, T2, index_type, MapType> & map)
+{
+  get().swap(map.get());
+  _keys.swap(map._keys);
+  _values.swap(map._values);
+  _offset.swap(map._offset);
+}
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+KOKKOS_FUNCTION index_type
+MapBase<T1, T2, index_type, MapType>::find(const T1 & key) const
+{
+  if (!size())
+    return invalid_id;
+
+  auto bucket = hashKey(key) % size();
+  auto begin = _offset[bucket];
+  auto end = _offset[bucket + 1];
+
+  for (index_type i = begin; i < end; ++i)
+    if (_keys[i] == key)
+      return i;
+
+  return invalid_id;
+}
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void
+dataStore(std::ostream & stream, MapBase<T1, T2, index_type, MapType> & map, void * context)
+{
+  using ::dataStore;
+
+  dataStore(stream, map.get(), context);
+  dataStore(stream, map._keys, context);
+  dataStore(stream, map._values, context);
+  dataStore(stream, map._offset, context);
+}
+
+template <typename T1, typename T2, typename index_type, template <typename...> class MapType>
+void
+dataLoad(std::istream & stream, MapBase<T1, T2, index_type, MapType> & map, void * context)
+{
+  using ::dataLoad;
+
+  dataLoad(stream, map.get(), context);
+  dataLoad(stream, map._keys, context);
+  dataLoad(stream, map._values, context);
+  dataLoad(stream, map._offset, context);
+}
+#endif
+
+template <typename T1, typename T2, typename index_type = MOOSE_KOKKOS_INDEX_TYPE>
+using Map = MapBase<T1, T2, index_type, std::map>;
+
+template <typename T1, typename T2, typename index_type = MOOSE_KOKKOS_INDEX_TYPE>
+using UnorderedMap = MapBase<T1, T2, index_type, std::unordered_map>;
+
+} // namespace Moose::Kokkos

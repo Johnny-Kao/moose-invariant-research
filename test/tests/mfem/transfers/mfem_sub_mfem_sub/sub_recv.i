@@ -1,0 +1,45 @@
+[Mesh]
+  type = MFEMFileMesh
+  file = ../../mesh/square.msh
+[]
+
+[Problem]
+  type = MFEMProblem
+  solve = false
+[]
+
+[FESpaces]
+  [H1FESpace]
+    type = MFEMScalarFESpace
+    fec_type = H1
+    fec_order = FIRST
+  []
+[]
+
+[AuxVariables]
+  [transfer_var]
+    type = MFEMVariable
+    fespace = H1FESpace
+  []
+[]
+
+[Executioner]
+  type = MFEMSteady
+[]
+
+[VectorPostprocessors]
+  [line_sample]
+    type = MFEMVariableLineValueSampler
+    variables = 'transfer_var'
+    start_point = '0 0 0'
+    end_point = '1 1 0.1'
+    num_points = 101
+  []
+[]
+
+[Outputs]
+  [CSV]
+    type = CSV
+    file_base = OutputData/recv
+  []
+[]

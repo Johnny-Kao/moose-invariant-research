@@ -1,0 +1,154 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#pragma once
+
+#include "Action.h"
+#include "MooseTypes.h"
+#include "MooseEnum.h"
+
+CreateMooseEnumClass(ContactModel, FRICTIONLESS, GLUED, COULOMB);
+CreateMooseEnumClass(ContactFormulation,
+                     RANFS,
+                     KINEMATIC,
+                     PENALTY,
+                     AUGMENTED_LAGRANGE,
+                     TANGENTIAL_PENALTY,
+                     MORTAR,
+                     MORTAR_PENALTY);
+CreateMooseEnumClass(ProximityMethod, NODE, CENTROID);
+CreateMooseEnumClass(ContactLMSpace, MATCH_DISPLACEMENT, LINEAR);
+
+/**
+ * Action class for creating constraints, kernels, and user objects necessary for mechanical
+ * contact.
+ */
+class ContactAction : public Action
+{
+public:
+  static InputParameters validParams();
+
+  ContactAction(const InputParameters & params);
+
+  virtual void act() override;
+
+  using Action::addRelationshipManagers;
+  virtual void addRelationshipManagers(Moose::RelationshipManagerType input_rm_type) override;
+
+  /**
+   * Get contact model
+   * @return enum
+   */
+  static MooseEnum getModelEnum();
+
+  /**
+   * Get contact formulation
+   * @return enum
+   */
+
+  static MooseEnum getFormulationEnum();
+  /**
+   * Get contact system
+   * @return enum
+   */
+  static MooseEnum getSystemEnum();
+
+  /**
+   * Get smoothing type
+   * @return enum
+   */
+  static MooseEnum getSmoothingEnum();
+
+  /**
+   * Get proximity method for automatic pairing
+   * @return enum
+   */
+  static MooseEnum getProximityMethod();
+
+  /**
+   * Define parameters used by multiple contact objects
+   * @return InputParameters object populated with common parameters
+   */
+  static InputParameters commonParameters();
+
+protected:
+  /// Primary/Secondary boundary name pairs for mechanical contact
+  std::vector<std::pair<BoundaryName, BoundaryName>> _boundary_pairs;
+
+  /// List of all possible boundaries for contact for automatic pairing (optional)
+  std::vector<BoundaryName> _automatic_pairing_boundaries;
+
+  /// Contact model type enum
+  const ContactModel _model;
+
+  /// Contact formulation
+  const ContactFormulation _formulation;
+
+  /// Finite element space to use for action-generated mortar Lagrange multiplier variables
+  const ContactLMSpace _lm_space;
+
+  /// Whether to use the dual Mortar approach
+  bool _use_dual;
+
+  /// Whether to generate the mortar mesh (useful in a restart simulation e.g.).
+  const bool _generate_mortar_mesh;
+
+  /// Whether mortar dynamic contact constraints are to be used
+  const bool _mortar_dynamics;
+
+  /// Surface mesh blocks used as the primary side of mortar contact, by contact pair
+  std::map<std::pair<BoundaryName, BoundaryName>, SubdomainName> _primary_surface_blocks;
+
+  struct MortarInfo
+  {
+    BoundaryID primary_id;
+    BoundaryID secondary_id;
+    std::string uo_name;
+  };
+
+  /// Map from boundary pair to mortar user object name
+  std::map<std::pair<BoundaryName, BoundaryName>, const MortarInfo> _bnd_pair_to_mortar_info;
+
+private:
+  /**
+   * Generate mesh and other Moose objects for Mortar contact
+   */
+  void addMortarContact();
+  /**
+   * Generate constraints for node to face contact
+   */
+  void addNodeFaceContact();
+  /**
+   * Add single contact pressure auxiliary kernel for various contact action objects
+   */
+  void addContactPressureAuxKernel();
+  /**
+   * Remove repeated contact pairs from _boundary_pairs.
+   */
+  void removeRepeatedPairs();
+  /// Name of the AutomaticContactPairingGenerator appended by this action
+  std::string automaticPairingGeneratorName() const;
+  /**
+   * Append the AutomaticContactPairingGenerator that detects contact pairs among
+   * _automatic_pairing_boundaries and, for mortar contact, creates their lower-dimensional blocks
+   */
+  void appendAutomaticPairingGenerator();
+  /// Fill _boundary_pairs from the contact pairs mesh meta-data of the appended generator
+  void getAutomaticContactPairs();
+  /**
+   * Returns a name suffix encoding the boundary pair for multi-pair mortar setups,
+   * or an empty string when there is only one pair (preserving single-pair name backwards compat).
+   */
+  std::string pairSuffix(const std::pair<BoundaryName, BoundaryName> & pair) const;
+  /**
+   * Returns the primary lower-dimensional subdomain name of a contact pair: the generated block or
+   * the user-provided primary surface block
+   */
+  std::string primarySubdomainName(const std::pair<BoundaryName, BoundaryName> & pair) const;
+};

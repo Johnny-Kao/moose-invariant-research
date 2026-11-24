@@ -1,0 +1,177 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "PorousFlowFullySaturatedMassTimeDerivative.h"
+
+#include "MooseVariable.h"
+
+registerMooseObject("PorousFlowApp", PorousFlowFullySaturatedMassTimeDerivative);
+registerMooseObject("PorousFlowApp", ADPorousFlowFullySaturatedMassTimeDerivative);
+
+template <bool is_ad>
+InputParameters
+PorousFlowFullySaturatedMassTimeDerivativeTempl<is_ad>::validParams()
+{
+  InputParameters params = GenericKernel<is_ad>::validParams();
+  // Mark residual contributions as time terms (same as TimeKernel / ADTimeKernel)
+  params.set<MultiMooseEnum>("vector_tags") = "time";
+  params.set<MultiMooseEnum>("matrix_tags") = "system time";
+  MooseEnum coupling_type("Hydro ThermoHydro HydroMechanical ThermoHydroMechanical", "Hydro");
+  params.addParam<MooseEnum>(
+      "coupling_type",
+      coupling_type,
+      "The type of simulation.  For simulations involving Mechanical deformations, you will need "
+      "to supply the correct Biot coefficient.  For simulations involving Thermal flows, you will "
+      "need an associated ConstantThermalExpansionCoefficient Material");
+  params.addRangeCheckedParam<Real>(
+      "biot_coefficient", 1.0, "biot_coefficient>=0 & biot_coefficient<=1", "Biot coefficient");
+  params.addParam<bool>("multiply_by_density",
+                        true,
+                        "If true, then this Kernel is the time derivative of the fluid mass.  If "
+                        "false, then this Kernel is the derivative of the fluid volume (which is "
+                        "common in poro-mechanics)");
+  params.addRequiredParam<UserObjectName>(
+      "PorousFlowDictator", "The UserObject that holds the list of PorousFlow variable names.");
+  params.addClassDescription(
+      "Fully-saturated version of the single-component, single-phase fluid mass derivative wrt "
+      "time.");
+  return params;
+}
+
+template <bool is_ad>
+PorousFlowFullySaturatedMassTimeDerivativeTempl<
+    is_ad>::PorousFlowFullySaturatedMassTimeDerivativeTempl(const InputParameters & parameters)
+  : GenericKernel<is_ad>(parameters),
+    _dictator(this->template getUserObject<PorousFlowDictator>("PorousFlowDictator")),
+    _var_is_porflow_var(_dictator.isPorousFlowVariable(_var.number())),
+    _multiply_by_density(this->template getParam<bool>("multiply_by_density")),
+    _coupling_type(
+        this->template getParam<MooseEnum>("coupling_type").template getEnum<CouplingTypeEnum>()),
+    _includes_thermal(_coupling_type == CouplingTypeEnum::ThermoHydro ||
+                      _coupling_type == CouplingTypeEnum::ThermoHydroMechanical),
+    _includes_mechanical(_coupling_type == CouplingTypeEnum::HydroMechanical ||
+                         _coupling_type == CouplingTypeEnum::ThermoHydroMechanical),
+    _biot_coefficient(this->template getParam<Real>("biot_coefficient")),
+    _biot_modulus(this->template getMaterialProperty<Real>("PorousFlow_constant_biot_modulus_qp")),
+    _thermal_coeff(_includes_thermal ? &this->template getMaterialProperty<Real>(
+                                           "PorousFlow_constant_thermal_expansion_coefficient_qp")
+                                     : nullptr),
+    _fluid_density(_multiply_by_density
+                       ? &this->template getGenericMaterialProperty<std::vector<Real>, is_ad>(
+                             "PorousFlow_fluid_phase_density_qp")
+                       : nullptr),
+    _dfluid_density_dvar(_multiply_by_density && !is_ad
+                             ? &this->template getMaterialProperty<std::vector<std::vector<Real>>>(
+                                   "dPorousFlow_fluid_phase_density_qp_dvar")
+                             : nullptr),
+    _pp(this->template getGenericMaterialProperty<std::vector<Real>, is_ad>(
+        "PorousFlow_porepressure_qp")),
+    _pp_old(this->template getMaterialPropertyOld<std::vector<Real>>("PorousFlow_porepressure_qp")),
+    _dpp_dvar(is_ad ? nullptr
+                    : &this->template getMaterialProperty<std::vector<std::vector<Real>>>(
+                          "dPorousFlow_porepressure_qp_dvar")),
+    _temperature(_includes_thermal ? &this->template getGenericMaterialProperty<Real, is_ad>(
+                                         "PorousFlow_temperature_qp")
+                                   : nullptr),
+    _temperature_old(_includes_thermal
+                         ? &this->template getMaterialPropertyOld<Real>("PorousFlow_temperature_qp")
+                         : nullptr),
+    _dtemperature_dvar(_includes_thermal && !is_ad
+                           ? &this->template getMaterialProperty<std::vector<Real>>(
+                                 "dPorousFlow_temperature_qp_dvar")
+                           : nullptr),
+    _strain_rate(_includes_mechanical ? &this->template getGenericMaterialProperty<Real, is_ad>(
+                                            "PorousFlow_volumetric_strain_rate_qp")
+                                      : nullptr),
+    _dstrain_rate_dvar(_includes_mechanical && !is_ad
+                           ? &this->template getMaterialProperty<std::vector<RealGradient>>(
+                                 "dPorousFlow_volumetric_strain_rate_qp_dvar")
+                           : nullptr)
+{
+  if (_dictator.numComponents() != 1 || _dictator.numPhases() != 1)
+    mooseError("PorousFlowFullySaturatedMassTimeDerivative is only applicable to single-phase, "
+               "single-component fluid-flow problems.  The Dictator proclaims that you have more "
+               "than one phase or more than one fluid component.  The Dictator does not take such "
+               "mistakes lightly");
+}
+
+template <bool is_ad>
+GenericReal<is_ad>
+PorousFlowFullySaturatedMassTimeDerivativeTempl<is_ad>::computeQpResidual()
+{
+  const unsigned phase = 0;
+  GenericReal<is_ad> volume = (_pp[_qp][phase] - _pp_old[_qp][phase]) / _dt / _biot_modulus[_qp];
+  if (_includes_thermal)
+    volume -= (*_thermal_coeff)[_qp] * ((*_temperature)[_qp] - (*_temperature_old)[_qp]) / _dt;
+  if (_includes_mechanical)
+    volume += _biot_coefficient * (*_strain_rate)[_qp];
+  if (_multiply_by_density)
+    return _test[_i][_qp] * (*_fluid_density)[_qp][phase] * volume;
+  return _test[_i][_qp] * volume;
+}
+
+template <bool is_ad>
+Real
+PorousFlowFullySaturatedMassTimeDerivativeTempl<is_ad>::computeQpJacobian()
+{
+  if constexpr (!is_ad)
+  {
+    if (!_var_is_porflow_var)
+      return 0.0;
+    return computeQpJac(_dictator.porousFlowVariableNum(_var.number()));
+  }
+  return 0.0;
+}
+
+template <bool is_ad>
+Real
+PorousFlowFullySaturatedMassTimeDerivativeTempl<is_ad>::computeQpOffDiagJacobian(unsigned int jvar)
+{
+  if constexpr (!is_ad)
+  {
+    if (_dictator.notPorousFlowVariable(jvar))
+      return 0.0;
+    return computeQpJac(_dictator.porousFlowVariableNum(jvar));
+  }
+  else
+    libmesh_ignore(jvar);
+  return 0.0;
+}
+
+template <bool is_ad>
+Real
+PorousFlowFullySaturatedMassTimeDerivativeTempl<is_ad>::computeQpJac(unsigned int pvar)
+{
+  if constexpr (!is_ad)
+  {
+    const unsigned phase = 0;
+    Real volume = (_pp[_qp][phase] - _pp_old[_qp][phase]) / _dt / _biot_modulus[_qp];
+    Real dvolume = (*_dpp_dvar)[_qp][phase][pvar] / _dt / _biot_modulus[_qp] * _phi[_j][_qp];
+    if (_includes_thermal)
+    {
+      volume -= (*_thermal_coeff)[_qp] * ((*_temperature)[_qp] - (*_temperature_old)[_qp]) / _dt;
+      dvolume -= (*_thermal_coeff)[_qp] * (*_dtemperature_dvar)[_qp][pvar] / _dt * _phi[_j][_qp];
+    }
+    if (_includes_mechanical)
+    {
+      volume += _biot_coefficient * (*_strain_rate)[_qp];
+      dvolume += _biot_coefficient * (*_dstrain_rate_dvar)[_qp][pvar] * _grad_phi[_j][_qp];
+    }
+    if (_multiply_by_density)
+      return _test[_i][_qp] * ((*_fluid_density)[_qp][phase] * dvolume +
+                               (*_dfluid_density_dvar)[_qp][phase][pvar] * _phi[_j][_qp] * volume);
+    return _test[_i][_qp] * dvolume;
+  }
+  else
+    libmesh_ignore(pvar);
+  return 0.0;
+}
+
+template class PorousFlowFullySaturatedMassTimeDerivativeTempl<false>;
+template class PorousFlowFullySaturatedMassTimeDerivativeTempl<true>;

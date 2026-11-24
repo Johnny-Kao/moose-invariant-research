@@ -1,0 +1,53 @@
+# Exception test: the incorrect number of initial stress AuxVariables are supplied
+
+[Mesh]
+  type = GeneratedMesh
+  dim = 3
+  nx = 1
+  ny = 1
+  nz = 10
+  xmin = -0.5
+  xmax = 0.5
+  ymin = -0.5
+  ymax = 0.5
+  zmin = -10
+  zmax = 0
+[]
+
+[GlobalParams]
+  displacements = 'disp_x disp_y disp_z'
+[]
+
+
+[Physics/SolidMechanics/QuasiStatic]
+  [./all]
+    add_variables = true
+    eigenstrain_names = ini_stress
+    incremental = true
+    strain = small
+  [../]
+[]
+
+[Materials]
+  [./elasticity_tensor]
+    type = ComputeIsotropicElasticityTensor
+    youngs_modulus = 1
+    poissons_ratio = 0.25
+  [../]
+  [./ini_stress]
+    type = ComputeEigenstrainFromInitialStress
+    initial_stress = '1 2 3 4 5 6 7 8 9'
+    initial_stress_aux = '1 2 3'
+    eigenstrain_name = ini_stress
+  [../]
+  [./stress]
+    type = ComputeFiniteStrainElasticStress
+  [../]
+[]
+
+
+[Executioner]
+  num_steps = 1
+  solve_type = NEWTON
+  type = Transient
+[]

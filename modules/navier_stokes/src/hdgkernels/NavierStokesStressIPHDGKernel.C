@@ -1,0 +1,36 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "NavierStokesStressIPHDGAssemblyHelper.h"
+#include "NavierStokesStressIPHDGKernel.h"
+
+registerMooseObject("NavierStokesApp", NavierStokesStressIPHDGKernel);
+
+InputParameters
+NavierStokesStressIPHDGKernel::validParams()
+{
+  auto params = ElementAndTraceScalarHDGKernel::validParams();
+  params += NavierStokesStressIPHDGAssemblyHelper::validParams();
+  params.addClassDescription(
+      "Adds viscous and pressure stress terms for element interiors and interior faces");
+  return params;
+}
+
+NavierStokesStressIPHDGKernel::NavierStokesStressIPHDGKernel(const InputParameters & params)
+  : ElementAndTraceScalarHDGKernel(params),
+    _iphdg_helper(std::make_unique<NavierStokesStressIPHDGAssemblyHelper>(
+        this, this, this, _mesh, _sys, _assembly, _tid, blockIDs(), std::set<BoundaryID>{}))
+{
+}
+
+ElementAndTraceScalarHDGAssemblyHelper &
+NavierStokesStressIPHDGKernel::hdgHelper()
+{
+  return *_iphdg_helper;
+}

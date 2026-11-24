@@ -1,0 +1,118 @@
+mu = 1.0
+epsilon = 1.0
+sigma = 20.0
+omega = 10.0
+kappa_i = '${fparse -sqrt(mu*omega*sqrt(epsilon^2*omega^2+sigma^2)-epsilon*mu*omega^2)/sqrt(2)}'
+kappa_r = '${fparse -mu*omega*sigma/kappa_i/2}'
+
+[Mesh]
+  type = MFEMFileMesh
+  file = ../mesh/inline-quad.mesh
+[]
+
+[Problem]
+  type = MFEMProblem
+  numeric_type = complex
+[]
+
+[FESpaces]
+  [H1FESpace]
+    type = MFEMScalarFESpace
+    fec_type = H1
+    fec_order = FIRST
+  []
+[]
+
+[Variables]
+  [u]
+    type = MFEMComplexVariable
+    fespace = H1FESpace
+  []
+[]
+
+[Functions]
+  [u0_r]
+    type = ParsedFunction
+    expression = exp(y*${kappa_i})*cos(y*${kappa_r})
+  []
+  [u0_i]
+    type = ParsedFunction
+    expression = -exp(y*${kappa_i})*sin(y*${kappa_r})
+  []
+  [stiffnessCoef]
+    type = ParsedFunction
+    expression = 1.0/${mu}
+  []
+  [massCoef]
+    type = ParsedFunction
+    expression = -${omega}*${omega}*${epsilon}
+  []
+  [lossCoef]
+    type = ParsedFunction
+    expression = ${omega}*${sigma}
+  []
+[]
+
+[BCs]
+  [dbc]
+    type = MFEMComplexScalarDirichletBC
+    variable = u
+    coefficient_real = u0_r
+    coefficient_imag = u0_i
+  []
+[]
+
+[Kernels]
+  [diffusion_complex]
+    type = MFEMComplexKernel
+    variable = u
+    [RealComponent]
+      type = MFEMDiffusionKernel
+      coefficient = stiffnessCoef
+    []
+    [ImagComponent]
+      type = MFEMDiffusionKernel
+      coefficient = 0.0
+    []
+  []
+  [mass_complex]
+    type = MFEMComplexKernel
+    variable = u
+    [RealComponent]
+      type = MFEMMassKernel
+      coefficient = massCoef
+    []
+    [ImagComponent]
+      type = MFEMMassKernel
+      coefficient = lossCoef
+    []
+  []
+[]
+
+[Solvers]
+  [main]
+    type = MFEMSuperLU
+  []
+[]
+
+[Executioner]
+  type = MFEMSteady
+  assembly_level = legacy
+[]
+
+[VectorPostprocessors]
+  [line_sample]
+    type = MFEMComplexVariableLineValueSampler
+    variables = 'u'
+    start_point = '0 0 0'
+    end_point = '1 1 0'
+    num_points = 101
+  []
+[]
+
+[Outputs]
+  [CSV]
+    type = CSV
+    file_base = OutputData/complex_2d_quad
+  []
+[]

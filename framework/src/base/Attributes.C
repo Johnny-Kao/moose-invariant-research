@@ -1,0 +1,620 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "Attributes.h"
+
+#include "TaggingInterface.h"
+#include "BoundaryRestrictable.h"
+#include "BlockRestrictable.h"
+#include "SetupInterface.h"
+#include "MooseVariableInterface.h"
+#include "MooseVariableFE.h"
+#include "AuxKernelBase.h"
+#include "AuxKernel.h"
+#include "MortarNodalAuxKernel.h"
+#include "ElementUserObject.h"
+#include "SideUserObject.h"
+#include "InternalSideUserObject.h"
+#include "InterfaceUserObject.h"
+#include "NodalUserObject.h"
+#include "GeneralUserObject.h"
+#include "ThreadedGeneralUserObject.h"
+#include "ShapeUserObject.h"
+#include "ShapeSideUserObject.h"
+#include "ShapeElementUserObject.h"
+#include "Reporter.h"
+#include "SystemBase.h"
+#include "DomainUserObject.h"
+#include "MortarUserObject.h"
+#include "FVInterpolationMethod.h"
+#include "ExecFlagRegistry.h"
+
+#include <algorithm>
+
+const ExecFlagType AttribExecOns::EXEC_ALL = registerExecFlag("ALL");
+
+std::ostream &
+operator<<(std::ostream & os, Interfaces & iface)
+{
+  os << "Interfaces(";
+  if (static_cast<bool>(iface & Interfaces::UserObject))
+    os << "|UserObject";
+  if (static_cast<bool>(iface & Interfaces::ElementUserObject))
+    os << "|ElementUserObject";
+  if (static_cast<bool>(iface & Interfaces::SideUserObject))
+    os << "|SideUserObject";
+  if (static_cast<bool>(iface & Interfaces::InternalSideUserObject))
+    os << "|InternalSideUserObject";
+  if (static_cast<bool>(iface & Interfaces::NodalUserObject))
+    os << "|NodalUserObject";
+  if (static_cast<bool>(iface & Interfaces::GeneralUserObject))
+    os << "|GeneralUserObject";
+  if (static_cast<bool>(iface & Interfaces::ThreadedGeneralUserObject))
+    os << "|ThreadedGeneralUserObject";
+  if (static_cast<bool>(iface & Interfaces::ShapeElementUserObject))
+    os << "|ShapeElementUserObject";
+  if (static_cast<bool>(iface & Interfaces::ShapeSideUserObject))
+    os << "|ShapeSideUserObject";
+  if (static_cast<bool>(iface & Interfaces::Postprocessor))
+    os << "|Postprocessor";
+  if (static_cast<bool>(iface & Interfaces::VectorPostprocessor))
+    os << "|VectorPostprocessor";
+  if (static_cast<bool>(iface & Interfaces::InterfaceUserObject))
+    os << "|InterfaceUserObject";
+  if (static_cast<bool>(iface & Interfaces::Reporter))
+    os << "|Reporter";
+  if (static_cast<bool>(iface & Interfaces::DomainUserObject))
+    os << "|DomainUserObject";
+  if (static_cast<bool>(iface & Interfaces::MortarUserObject))
+    os << "|MortarUserObject";
+  if (static_cast<bool>(iface & Interfaces::FVInterpolationMethod))
+    os << "|FVInterpolationMethod";
+  os << ")";
+  return os;
+}
+
+bool
+AttribTagBase::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribTagBase *>(&other);
+  if (!a)
+    return false;
+  if (a->_vals.size() == 0)
+    return true; // the condition is empty tags - which we take to mean any tag should match
+
+  // return true if any single tag matches between the two attribute objects
+  for (auto val : _vals)
+    if (std::find(a->_vals.begin(), a->_vals.end(), val) != a->_vals.end())
+      return true;
+  return false;
+}
+
+bool
+AttribTagBase::isEqual(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribTagBase *>(&other);
+  if (!a || a->_vals.size() != _vals.size())
+    return false;
+
+  for (size_t i = 0; i < a->_vals.size(); i++)
+    if (a->_vals[i] != _vals[i])
+      return false;
+  return true;
+}
+
+void
+AttribMatrixTags::initFrom(const MooseObject * obj)
+{
+  _vals.clear();
+  auto t = dynamic_cast<const TaggingInterface *>(obj);
+  if (t)
+  {
+    for (auto & tag : t->getMatrixTags({}))
+      _vals.push_back(static_cast<int>(tag));
+  }
+}
+
+void
+AttribVectorTags::initFrom(const MooseObject * obj)
+{
+  _vals.clear();
+  auto t = dynamic_cast<const TaggingInterface *>(obj);
+  if (t)
+  {
+    for (auto & tag : t->getVectorTags({}))
+      _vals.push_back(static_cast<int>(tag));
+  }
+}
+
+void
+AttribExecOns::initFrom(const MooseObject * obj)
+{
+  _vals.clear();
+  if (const auto sup = dynamic_cast<const SetupInterface *>(obj))
+  {
+    const auto & current_items = sup->getExecuteOnEnum();
+    _vals.reserve(current_items.size());
+    for (auto & on : current_items)
+      _vals.push_back(on);
+  }
+}
+
+bool
+AttribExecOns::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribExecOns *>(&other);
+  if (!a || a->_vals.empty())
+    return false;
+  auto cond = a->_vals[0];
+  if (cond == EXEC_ALL)
+    return true;
+
+  for (const auto val : _vals)
+    if (val == EXEC_ALL || val == cond)
+      return true;
+  return false;
+}
+
+bool
+AttribExecOns::isEqual(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribExecOns *>(&other);
+  if (!a || a->_vals.size() != _vals.size())
+    return false;
+
+  for (size_t i = 0; i < a->_vals.size(); i++)
+    if (a->_vals[i] != _vals[i])
+      return false;
+  return true;
+}
+
+void
+AttribSubdomains::initFrom(const MooseObject * obj)
+{
+  _vals.clear();
+  auto blk = dynamic_cast<const BlockRestrictable *>(obj);
+  if (blk && blk->blockRestricted())
+  {
+    for (auto id : blk->blockIDs())
+      _vals.push_back(id);
+  }
+  else
+    _vals.push_back(Moose::ANY_BLOCK_ID);
+}
+
+bool
+AttribSubdomains::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribSubdomains *>(&other);
+  if (!a || a->_vals.size() < 1)
+    return false;
+
+  auto cond = a->_vals[0];
+  if (cond == Moose::ANY_BLOCK_ID)
+    return true;
+  else if (cond == Moose::INVALID_BLOCK_ID)
+    return false;
+
+  for (auto id : _vals)
+  {
+    if (id == cond || id == Moose::ANY_BLOCK_ID)
+      return true;
+  }
+  return false;
+}
+
+bool
+AttribSubdomains::isEqual(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribSubdomains *>(&other);
+  if (!a || a->_vals.size() != _vals.size())
+    return false;
+
+  for (size_t i = 0; i < a->_vals.size(); i++)
+    if (a->_vals[i] != _vals[i])
+      return false;
+  return true;
+}
+
+void
+AttribBoundaries::initFrom(const MooseObject * obj)
+{
+  _vals.clear();
+  auto bnd = dynamic_cast<const BoundaryRestrictable *>(obj);
+  if (bnd && bnd->boundaryRestricted())
+  {
+    for (auto & bound : bnd->boundaryIDs())
+      _vals.push_back(bound);
+  }
+  else
+    _vals.push_back(Moose::ANY_BOUNDARY_ID);
+}
+
+bool
+AttribBoundaries::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribBoundaries *>(&other);
+  if (!a || a->_vals.size() < 1)
+    return false;
+
+  // An object that is not boundary restricted stores only Moose::ANY_BOUNDARY_ID
+  const bool unrestricted =
+      std::find(_vals.begin(), _vals.end(), Moose::ANY_BOUNDARY_ID) != _vals.end();
+  if (a->_restriction == Restriction::UnrestrictedOnly)
+    return unrestricted;
+  if (a->_restriction == Restriction::RestrictedOnly && unrestricted)
+    return false;
+
+  // return true if a single tag matches between the two attribute objects
+  for (auto val : _vals)
+  {
+    if (a->_restriction == Restriction::Any && (val == Moose::ANY_BOUNDARY_ID))
+      return true;
+    if (std::find(a->_vals.begin(), a->_vals.end(), val) != a->_vals.end())
+      return true;
+    else if (std::find(a->_vals.begin(), a->_vals.end(), Moose::ANY_BOUNDARY_ID) != a->_vals.end())
+      return true;
+  }
+  return false;
+}
+
+bool
+AttribBoundaries::isEqual(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribBoundaries *>(&other);
+  if (!a || a->_vals.size() != _vals.size() || a->_restriction != _restriction)
+    return false;
+
+  for (size_t i = 0; i < a->_vals.size(); i++)
+    if (a->_vals[i] != _vals[i])
+      return false;
+  return true;
+}
+
+void
+AttribThread::initFrom(const MooseObject * obj)
+{
+  _val = obj->getParam<THREAD_ID>("_tid");
+}
+bool
+AttribThread::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribThread *>(&other);
+  return a && (a->_val == _val);
+}
+bool
+AttribThread::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+void
+AttribExecutionOrderGroup::initFrom(const MooseObject * obj)
+{
+  if (const auto * uo = dynamic_cast<const UserObjectBase *>(obj))
+    _val = uo->getParam<int>("execution_order_group");
+  else if (const auto * aux = dynamic_cast<const AuxKernelBase *>(obj))
+    _val = aux->getParam<int>("execution_order_group");
+  else
+    _val = 0;
+}
+bool
+AttribExecutionOrderGroup::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribExecutionOrderGroup *>(&other);
+  return a && (a->_val == _val);
+}
+bool
+AttribExecutionOrderGroup::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+void
+AttribAuxKernelType::initFrom(const MooseObject * obj)
+{
+  _val = static_cast<AuxKernelType>(0);
+  const auto * aux = dynamic_cast<const AuxKernelBase *>(obj);
+  if (!aux)
+    return;
+
+  if (dynamic_cast<const AuxKernel *>(obj))
+    _val = AuxKernelType::Real;
+  else if (dynamic_cast<const VectorAuxKernel *>(obj))
+    _val = AuxKernelType::Vector;
+  else if (dynamic_cast<const ArrayAuxKernel *>(obj))
+    _val = AuxKernelType::Array;
+  else
+    return;
+
+  if (dynamic_cast<const MortarNodalAuxKernelTempl<Real> *>(obj) ||
+      dynamic_cast<const MortarNodalAuxKernelTempl<RealVectorValue> *>(obj) ||
+      dynamic_cast<const MortarNodalAuxKernelTempl<RealEigenVector> *>(obj))
+    _val |= AuxKernelType::Mortar;
+  else if (aux->isNodal())
+    _val |= AuxKernelType::Nodal;
+  else
+    _val |= AuxKernelType::Elemental;
+}
+bool
+AttribAuxKernelType::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribAuxKernelType *>(&other);
+  if (!a)
+    return false;
+
+  // Each bit group the query requests must share a bit with this object's type
+  const auto query = a->_val;
+  for (const auto group : {AuxKernelType::AllValueTypes, AuxKernelType::AllCategories})
+    if (static_cast<bool>(query & group) && !static_cast<bool>(query & group & _val))
+      return false;
+  return static_cast<bool>(_val);
+}
+bool
+AttribAuxKernelType::isEqual(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribAuxKernelType *>(&other);
+  return a && (a->_val == _val);
+}
+
+void
+AttribSysNum::initFrom(const MooseObject * obj)
+{
+  auto * sys = obj->getParam<SystemBase *>("_sys");
+
+  if (sys)
+    _val = sys->number();
+}
+
+bool
+AttribSysNum::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribSysNum *>(&other);
+  return a && (a->_val == _val);
+}
+
+bool
+AttribSysNum::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+void
+AttribPreIC::initFrom(const MooseObject * /*obj*/)
+{
+}
+bool
+AttribPreIC::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribPreIC *>(&other);
+  return a && (a->_val == _val);
+}
+
+bool
+AttribPreIC::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+bool
+AttribPreAux::isMatch(const Attribute & other) const
+{
+  const auto a = dynamic_cast<const AttribPreAux *>(&other);
+
+  bool is_match = false;
+
+  if (a && !_vals.empty() && !a->_vals.empty())
+  {
+    is_match = std::includes(_vals.begin(), _vals.end(), a->_vals.begin(), a->_vals.end()) ||
+               std::includes(a->_vals.begin(), a->_vals.end(), _vals.begin(), _vals.end());
+  }
+
+  return is_match;
+}
+
+bool
+AttribPreAux::isEqual(const Attribute & other) const
+{
+  const auto a = dynamic_cast<const AttribPreAux *>(&other);
+  return a && a->_vals == _vals;
+}
+
+void
+AttribPreAux::initFrom(const MooseObject * /*obj*/)
+{
+}
+
+bool
+AttribPostAux::isMatch(const Attribute & other) const
+{
+  const auto a = dynamic_cast<const AttribPostAux *>(&other);
+
+  bool is_match = false;
+
+  if (a && !_vals.empty() && !a->_vals.empty())
+  {
+    is_match = std::includes(_vals.begin(), _vals.end(), a->_vals.begin(), a->_vals.end()) ||
+               std::includes(a->_vals.begin(), a->_vals.end(), _vals.begin(), _vals.end());
+  }
+
+  return is_match;
+}
+
+bool
+AttribPostAux::isEqual(const Attribute & other) const
+{
+  const auto a = dynamic_cast<const AttribPostAux *>(&other);
+  return a && a->_vals == _vals;
+}
+
+void
+AttribPostAux::initFrom(const MooseObject * /*obj*/)
+{
+}
+
+void
+AttribName::initFrom(const MooseObject * obj)
+{
+  _val = obj->name();
+}
+bool
+AttribName::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribName *>(&other);
+  return a && (a->_val == _val);
+}
+
+bool
+AttribName::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+void
+AttribSystem::initFrom(const MooseObject * obj)
+{
+  _val = obj->parameters().getSystemAttributeName();
+}
+
+bool
+AttribSystem::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribSystem *>(&other);
+  return a && (a->_val == _val);
+}
+
+bool
+AttribSystem::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+void
+AttribKokkos::initFrom(const MooseObject * obj)
+{
+#ifdef MOOSE_KOKKOS_ENABLED
+  _val = obj->isKokkosObject();
+#else
+  static_cast<void>(obj);
+  _val = false;
+#endif
+}
+
+bool
+AttribKokkos::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribKokkos *>(&other);
+  return a && (a->_val == _val);
+}
+
+bool
+AttribKokkos::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+void
+AttribResidualObject::initFrom(const MooseObject * obj)
+{
+  _val = obj->getParam<bool>("_residual_object");
+  _initd = true;
+}
+
+bool
+AttribResidualObject::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribResidualObject *>(&other);
+  return _initd && a && a->_initd && (a->_val == _val);
+}
+
+bool
+AttribResidualObject::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+void
+AttribVar::initFrom(const MooseObject * obj)
+{
+  auto vi = dynamic_cast<const MooseVariableInterface<Real> *>(obj);
+  if (vi)
+    _val = static_cast<int>(vi->mooseVariableBase()->number());
+}
+bool
+AttribVar::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribVar *>(&other);
+  return a && (_val != -1) && (a->_val == _val);
+}
+
+bool
+AttribVar::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}
+
+void
+AttribInterfaces::initFrom(const MooseObject * obj)
+{
+  _val = 0;
+  // clang-format off
+  _val |= (unsigned int)Interfaces::UserObject                * (dynamic_cast<const UserObjectBase *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::ElementUserObject         * (dynamic_cast<const ElementUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::SideUserObject            * (dynamic_cast<const SideUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::InternalSideUserObject    * (dynamic_cast<const InternalSideUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::InterfaceUserObject       * (dynamic_cast<const InterfaceUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::NodalUserObject           * (dynamic_cast<const NodalUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::GeneralUserObject         * (dynamic_cast<const GeneralUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::ThreadedGeneralUserObject * (dynamic_cast<const ThreadedGeneralUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::ShapeElementUserObject    * (dynamic_cast<const ShapeElementUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::ShapeSideUserObject       * (dynamic_cast<const ShapeSideUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::Postprocessor             * (dynamic_cast<const Postprocessor *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::VectorPostprocessor       * (dynamic_cast<const VectorPostprocessor *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::BlockRestrictable         * (dynamic_cast<const BlockRestrictable *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::BoundaryRestrictable      * (dynamic_cast<const BoundaryRestrictable *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::Reporter                  * (dynamic_cast<const Reporter *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::DomainUserObject          * (dynamic_cast<const DomainUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::MortarUserObject          * (dynamic_cast<const MortarUserObject *>(obj) != nullptr);
+  _val |= (unsigned int)Interfaces::FVInterpolationMethod     * (dynamic_cast<const FVInterpolationMethod *>(obj) != nullptr);
+  // clang-format on
+}
+
+bool
+AttribInterfaces::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribInterfaces *>(&other);
+  return a && (a->_val & _val);
+}
+
+bool
+AttribInterfaces::isEqual(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribInterfaces *>(&other);
+  return a && (a->_val == _val);
+}
+
+void
+AttribDisplaced::initFrom(const MooseObject * obj)
+{
+  _val = obj->parameters().have_parameter<bool>("use_displaced_mesh") &&
+         obj->getParam<bool>("use_displaced_mesh");
+}
+
+bool
+AttribDisplaced::isMatch(const Attribute & other) const
+{
+  auto a = dynamic_cast<const AttribDisplaced *>(&other);
+  return a && (a->_val == _val);
+}
+
+bool
+AttribDisplaced::isEqual(const Attribute & other) const
+{
+  return isMatch(other);
+}

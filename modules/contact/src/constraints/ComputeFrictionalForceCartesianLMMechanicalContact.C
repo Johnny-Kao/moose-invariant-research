@@ -1,0 +1,361 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "ComputeFrictionalForceCartesianLMMechanicalContact.h"
+#include "MortarContactUtils.h"
+#include "DisplacedProblem.h"
+#include "Assembly.h"
+#include "AutomaticMortarGeneration.h"
+#include "metaphysicl/metaphysicl_version.h"
+#include "metaphysicl/dualsemidynamicsparsenumberarray.h"
+#include "metaphysicl/parallel_dualnumber.h"
+#if METAPHYSICL_MAJOR_VERSION < 2
+#include "metaphysicl/parallel_dynamic_std_array_wrapper.h"
+#else
+#include "metaphysicl/parallel_dynamic_array_wrapper.h"
+#endif
+#include "metaphysicl/parallel_semidynamicsparsenumberarray.h"
+#include "timpi/parallel_sync.h"
+
+registerMooseObject("ContactApp", ComputeFrictionalForceCartesianLMMechanicalContact);
+
+namespace
+{
+const InputParameters &
+assignVarsInParamsFriction(const InputParameters & params_in)
+{
+  InputParameters & ret = const_cast<InputParameters &>(params_in);
+  const auto & disp_x_name = ret.get<std::vector<VariableName>>("disp_x");
+  if (disp_x_name.size() != 1)
+    mooseError("We require that the disp_x parameter have exactly one coupled name");
+
+  // We do this so we don't get any variable errors during MortarConstraint(Base) construction
+  ret.set<VariableName>("secondary_variable") = disp_x_name[0];
+  ret.set<VariableName>("primary_variable") = disp_x_name[0];
+
+  return ret;
+}
+}
+
+InputParameters
+ComputeFrictionalForceCartesianLMMechanicalContact::validParams()
+{
+  InputParameters params = ComputeWeightedGapCartesianLMMechanicalContact::validParams();
+  params.addClassDescription("Computes mortar frictional forces.");
+  params.addParam<Real>("c_t", 1e0, "Numerical parameter for tangential constraints");
+  params.addParam<Real>(
+      "epsilon",
+      1.0e-7,
+      "Minimum value of contact pressure that will trigger frictional enforcement");
+  params.addRangeCheckedParam<Real>(
+      "mu", "mu > 0", "The friction coefficient for the Coulomb friction law");
+  MooseEnum friction_projection_degree("ONE TWO", "TWO");
+  friction_projection_degree.addDocumentation(
+      "ONE", "Use the degree-one Alart-Curnier friction residual.");
+  friction_projection_degree.addDocumentation(
+      "TWO", "Use the degree-two Hueber-Stadler-Wohlmuth friction residual.");
+  params.addParam<MooseEnum>(
+      "friction_projection_degree",
+      friction_projection_degree,
+      "Degree of the friction-residual projection; see MortarContactUtils.h.");
+  return params;
+}
+
+ComputeFrictionalForceCartesianLMMechanicalContact::
+    ComputeFrictionalForceCartesianLMMechanicalContact(const InputParameters & parameters)
+  : ComputeWeightedGapCartesianLMMechanicalContact(assignVarsInParamsFriction(parameters)),
+    _c_t(getParam<Real>("c_t")),
+    _friction_projection_degree(getParam<MooseEnum>("friction_projection_degree")
+                                    .getEnum<Moose::Mortar::Contact::FrictionProjectionDegree>()),
+    _secondary_x_dot(adCoupledDot("disp_x")),
+    _primary_x_dot(adCoupledNeighborValueDot("disp_x")),
+    _secondary_y_dot(adCoupledDot("disp_y")),
+    _primary_y_dot(adCoupledNeighborValueDot("disp_y")),
+    _secondary_z_dot(_has_disp_z ? &adCoupledDot("disp_z") : nullptr),
+    _primary_z_dot(_has_disp_z ? &adCoupledNeighborValueDot("disp_z") : nullptr),
+    _mu(getParam<Real>("mu")),
+    _epsilon(getParam<Real>("epsilon"))
+{
+}
+
+void
+ComputeFrictionalForceCartesianLMMechanicalContact::computeQpProperties()
+{
+  ComputeWeightedGapCartesianLMMechanicalContact::computeQpProperties();
+
+  // Trim derivatives
+  const auto & primary_ip_lowerd_map = amg().getPrimaryIpToLowerElementMap(
+      *_lower_primary_elem,
+      AutomaticMortarGeneration::primaryInteriorParentOrSelf(*_lower_primary_elem),
+      *_lower_secondary_elem);
+  const auto & secondary_ip_lowerd_map =
+      amg().getSecondaryIpToLowerElementMap(*_lower_secondary_elem);
+
+  std::array<const MooseVariable *, 3> var_array{{_disp_x_var, _disp_y_var, _disp_z_var}};
+  std::array<ADReal, 3> primary_disp_dot{
+      {_primary_x_dot[_qp], _primary_y_dot[_qp], _has_disp_z ? (*_primary_z_dot)[_qp] : 0}};
+  std::array<ADReal, 3> secondary_disp_dot{
+      {_secondary_x_dot[_qp], _secondary_y_dot[_qp], _has_disp_z ? (*_secondary_z_dot)[_qp] : 0}};
+
+  trimInteriorNodeDerivatives(primary_ip_lowerd_map, var_array, primary_disp_dot, false);
+  trimInteriorNodeDerivatives(secondary_ip_lowerd_map, var_array, secondary_disp_dot, true);
+
+  const ADReal & prim_x_dot = primary_disp_dot[0];
+  const ADReal & prim_y_dot = primary_disp_dot[1];
+  const ADReal * prim_z_dot = nullptr;
+  if (_has_disp_z)
+    prim_z_dot = &primary_disp_dot[2];
+
+  const ADReal & sec_x_dot = secondary_disp_dot[0];
+  const ADReal & sec_y_dot = secondary_disp_dot[1];
+  const ADReal * sec_z_dot = nullptr;
+  if (_has_disp_z)
+    sec_z_dot = &secondary_disp_dot[2];
+
+  // Build relative velocity vector
+  ADRealVectorValue relative_velocity;
+
+  if (_has_disp_z)
+    relative_velocity = {sec_x_dot - prim_x_dot, sec_y_dot - prim_y_dot, *sec_z_dot - *prim_z_dot};
+  else
+    relative_velocity = {sec_x_dot - prim_x_dot, sec_y_dot - prim_y_dot, 0.0};
+
+  _qp_tangential_velocity_nodal = relative_velocity * (_JxW_msm[_qp] * _coord[_qp]);
+}
+
+void
+ComputeFrictionalForceCartesianLMMechanicalContact::computeQpIProperties()
+{
+  ComputeWeightedGapCartesianLMMechanicalContact::computeQpIProperties();
+
+  const auto & nodal_tangents = _nodal_frames.tangents(amg(),
+                                                       _lower_secondary_elem->node_ref(_i),
+                                                       _normals[_i],
+                                                       Moose::doDerivatives(_subproblem, _sys));
+  // Get the _dof_to_weighted_tangential_velocity map
+  const DofObject * const dof =
+      _lm_vars[0]->isNodal() ? cast_ptr<const DofObject *>(_lower_secondary_elem->node_ptr(_i))
+                             : cast_ptr<const DofObject *>(_lower_secondary_elem);
+
+  _dof_to_weighted_tangential_velocity[dof][0] +=
+      _test[_i][_qp] * _qp_tangential_velocity_nodal * nodal_tangents[0];
+
+  // Get the _dof_to_weighted_tangential_velocity map for a second direction
+  if (_has_disp_z)
+    _dof_to_weighted_tangential_velocity[dof][1] +=
+        _test[_i][_qp] * _qp_tangential_velocity_nodal * nodal_tangents[1];
+}
+
+void
+ComputeFrictionalForceCartesianLMMechanicalContact::residualSetup()
+{
+  ComputeWeightedGapCartesianLMMechanicalContact::residualSetup();
+  _dof_to_weighted_tangential_velocity.clear();
+}
+
+void
+ComputeFrictionalForceCartesianLMMechanicalContact::post()
+{
+  Moose::Mortar::Contact::communicateGaps(
+      _dof_to_weighted_gap, _mesh, _nodal, _normalize_c, _communicator, false);
+  Moose::Mortar::Contact::communicateVelocities(
+      _dof_to_weighted_tangential_velocity, _mesh, _nodal, _communicator, false);
+
+  // Enforce frictional complementarity constraints
+  for (const auto & pr : _dof_to_weighted_tangential_velocity)
+  {
+    const DofObject * const dof = pr.first;
+
+    if (dof->processor_id() != this->processor_id())
+      continue;
+
+    auto & weighted_gap_pr = _dof_to_weighted_gap[dof];
+    _weighted_gap_ptr = &weighted_gap_pr.first;
+    _normalization_ptr = &weighted_gap_pr.second;
+    _tangential_vel_ptr[0] = &(pr.second[0]);
+
+    if (_has_disp_z)
+      _tangential_vel_ptr[1] = &(pr.second[1]);
+
+    enforceConstraintOnDof(dof);
+  }
+}
+
+void
+ComputeFrictionalForceCartesianLMMechanicalContact::incorrectEdgeDroppingPost(
+    const std::unordered_set<const Node *> & inactive_lm_nodes)
+{
+  Moose::Mortar::Contact::communicateGaps(
+      _dof_to_weighted_gap, _mesh, _nodal, _normalize_c, _communicator, false);
+  Moose::Mortar::Contact::communicateVelocities(
+      _dof_to_weighted_tangential_velocity, _mesh, _nodal, _communicator, false);
+
+  // Enforce frictional complementarity constraints
+  for (const auto & pr : _dof_to_weighted_tangential_velocity)
+  {
+    const DofObject * const dof = pr.first;
+
+    // If node inactive, skip
+    if ((inactive_lm_nodes.find(static_cast<const Node *>(dof)) != inactive_lm_nodes.end()) ||
+        (dof->processor_id() != this->processor_id()))
+      continue;
+
+    _weighted_gap_ptr = &_dof_to_weighted_gap[dof].first;
+    _normalization_ptr = &_dof_to_weighted_gap[dof].second;
+    _tangential_vel_ptr[0] = &pr.second[0];
+
+    if (_has_disp_z)
+      _tangential_vel_ptr[1] = &pr.second[1];
+
+    enforceConstraintOnDof(dof);
+  }
+}
+
+void
+ComputeFrictionalForceCartesianLMMechanicalContact::enforceConstraintOnDof(
+    const DofObject * const dof)
+{
+  using std::abs, std::sqrt, std::min;
+
+  const auto & weighted_gap = *_weighted_gap_ptr;
+  const Real c = _normalize_c ? _c / *_normalization_ptr : _c;
+  const Real c_t = _normalize_c ? _c_t / *_normalization_ptr : _c_t;
+
+  const auto dof_index_x = dof->dof_number(_sys.number(), _lm_vars[0]->number(), 0);
+  const auto dof_index_y = dof->dof_number(_sys.number(), _lm_vars[1]->number(), 0);
+  const Real scaling_factor_x = _lm_vars[0]->scalingFactor();
+  const Real scaling_factor_y = _lm_vars[1]->scalingFactor();
+  Real scaling_factor_z = 1;
+
+  ADReal lm_x = (*_sys.currentSolution())(dof_index_x);
+  ADReal lm_y = (*_sys.currentSolution())(dof_index_y);
+
+  Moose::derivInsert(lm_x.derivatives(), dof_index_x, 1.);
+  Moose::derivInsert(lm_y.derivatives(), dof_index_y, 1.);
+
+  dof_id_type dof_index_z(-1);
+  ADReal lm_z;
+  if (_has_disp_z)
+  {
+    dof_index_z = dof->dof_number(_sys.number(), _lm_vars[2]->number(), 0);
+    lm_z = (*_sys.currentSolution())(dof_index_z);
+    Moose::derivInsert(lm_z.derivatives(), dof_index_z, 1.);
+    scaling_factor_z = _lm_vars[2]->scalingFactor();
+  }
+
+  const auto & normal = dofNormal(dof);
+  const auto & tangents = dofTangents(dof);
+
+  ADReal normal_pressure_value = lm_x * normal(0) + lm_y * normal(1);
+  ADReal tangential_pressure_value = lm_x * tangents[0](0) + lm_y * tangents[0](1);
+
+  ADReal tangential_pressure_value_dir;
+
+  if (_has_disp_z)
+  {
+    normal_pressure_value += lm_z * normal(2);
+    tangential_pressure_value += lm_z * tangents[0](2);
+    tangential_pressure_value_dir =
+        lm_x * tangents[1](0) + lm_y * tangents[1](1) + lm_z * tangents[1](2);
+  }
+
+  ADReal normal_dof_residual = min(normal_pressure_value, weighted_gap * c);
+  ADReal tangential_dof_residual;
+  ADReal tangential_dof_residual_dir;
+
+  if (!_has_disp_z)
+  {
+    const std::array<ADReal, 1> tangential_pressure{{tangential_pressure_value}};
+    const std::array<ADReal, 1> tangential_velocity{{*_tangential_vel_ptr[0]}};
+
+    tangential_dof_residual =
+        Moose::Mortar::Contact::frictionalContactResidual(tangential_pressure,
+                                                          tangential_velocity,
+                                                          ADReal(c_t),
+                                                          ADReal(_dt),
+                                                          normal_pressure_value,
+                                                          c * weighted_gap,
+                                                          ADReal(_mu),
+                                                          ADReal(_epsilon),
+                                                          _friction_projection_degree)[0];
+  }
+  else
+  {
+    const std::array<ADReal, 2> tangential_pressure{
+        {tangential_pressure_value, tangential_pressure_value_dir}};
+    const std::array<ADReal, 2> tangential_velocity{
+        {*_tangential_vel_ptr[0], *_tangential_vel_ptr[1]}};
+
+    const auto residual =
+        Moose::Mortar::Contact::frictionalContactResidual(tangential_pressure,
+                                                          tangential_velocity,
+                                                          ADReal(c_t),
+                                                          ADReal(_dt),
+                                                          normal_pressure_value,
+                                                          c * weighted_gap,
+                                                          ADReal(_mu),
+                                                          ADReal(_epsilon),
+                                                          _friction_projection_degree);
+    tangential_dof_residual = residual[0];
+    tangential_dof_residual_dir = residual[1];
+  }
+
+  // Compute the friction coefficient (constant or function)
+
+  // Get index for normal constraint.
+  // We do this to get a decent Jacobian structure, which is key for the use of iterative solvers.
+  // Using old normal vector to avoid changes in the Jacobian structure within one time step
+
+  Real ny, nz;
+  // Intially, use the current normal vector
+  if (_dof_to_old_normal_vector[dof].norm() < TOLERANCE)
+  {
+    ny = MetaPhysicL::raw_value(normal(1));
+    nz = MetaPhysicL::raw_value(normal(2));
+  }
+  else
+  {
+    ny = _dof_to_old_normal_vector[dof](1);
+    nz = _dof_to_old_normal_vector[dof](2);
+  }
+
+  unsigned int component_normal = 0;
+
+  // Consider constraint orientation to improve Jacobian structure
+  const Real threshold_for_Jacobian = _has_disp_z ? 1.0 / sqrt(3.0) : 1.0 / sqrt(2.0);
+
+  if (abs(ny) > threshold_for_Jacobian)
+    component_normal = 1;
+  else if (abs(nz) > threshold_for_Jacobian)
+    component_normal = 2;
+
+  addResidualsAndJacobian(
+      _assembly,
+      std::array<ADReal, 1>{{normal_dof_residual}},
+      std::array<dof_id_type, 1>{{component_normal == 0
+                                      ? dof_index_x
+                                      : (component_normal == 1 ? dof_index_y : dof_index_z)}},
+      component_normal == 0 ? scaling_factor_x
+                            : (component_normal == 1 ? scaling_factor_y : scaling_factor_z));
+
+  addResidualsAndJacobian(
+      _assembly,
+      std::array<ADReal, 1>{{tangential_dof_residual}},
+      std::array<dof_id_type, 1>{
+          {(component_normal == 0 || component_normal == 2) ? dof_index_y : dof_index_x}},
+      (component_normal == 0 || component_normal == 2) ? scaling_factor_y : scaling_factor_x);
+
+  if (_has_disp_z)
+    addResidualsAndJacobian(
+        _assembly,
+        std::array<ADReal, 1>{{tangential_dof_residual_dir}},
+        std::array<dof_id_type, 1>{
+            {(component_normal == 0 || component_normal == 1) ? dof_index_z : dof_index_x}},
+        (component_normal == 0 || component_normal == 1) ? scaling_factor_z : scaling_factor_x);
+}

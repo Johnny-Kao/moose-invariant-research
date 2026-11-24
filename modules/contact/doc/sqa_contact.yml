@@ -1,0 +1,11 @@
+directories:
+    - ${MOOSE_DIR}/modules/contact/test/tests
+    - ${MOOSE_DIR}/modules/contact/unit/src
+specs:
+    - tests
+    - '*.unit_tests'
+dependencies:
+    - framework
+    - solid_mechanics
+repo: moose
+reports: !include ${MOOSE_DIR}/modules/contact/doc/sqa_reports.yml

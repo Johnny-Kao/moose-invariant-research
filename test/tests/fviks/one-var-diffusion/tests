@@ -1,0 +1,106 @@
+[Tests]
+  issues = '#17087'
+  [run_except1]
+    type = RunException
+    input = test.i
+    expect_err = "variable1 does not exist on all the blocks specified by the subdomain1 parameter"
+    cli_args = "FVInterfaceKernels/active='bad1'"
+    design = 'FVInterfaceKernels/index.md'
+    requirement = 'The system shall report an error if a user specified variable on the 1st side of an interface does not actually exist on the 1st side.'
+  []
+  [run_except2]
+    type = RunException
+    input = test.i
+    expect_err = "variable2 does not exist on all the blocks specified by the subdomain2 parameter"
+    cli_args = "FVInterfaceKernels/active='bad2'"
+    design = 'FVInterfaceKernels/index.md'
+    requirement = 'The system shall report an error if a user specified variable on the 2nd side of an interface does not actually exist on the 2nd side.'
+  []
+  [run_except3]
+    type = RunException
+    input = test.i
+    expect_err = "variable1 does not exist on all the blocks specified by the subdomain2 "
+                 "parameter\.\s*Note that you did not provide the variable2 parameter, so variable1 "
+                 "was implicitly used on subdomain2"
+    cli_args = "FVInterfaceKernels/active='bad3'"
+    design = 'FVInterfaceKernels/index.md'
+    requirement = 'The system shall report an error if a user does not specify a variable on the 2nd side of an interface, leading the system to assume that the variable on the 1st side of the interface should be used on the 2nd side, and the variable on the 1st side does not exist on the 2nd side.'
+  []
+  [wrong_subdomain_pair]
+    type = RunException
+    input = test.i
+    # disabled renumbering to keep face infos the same the message says 0 and 1 not 1 and 0
+    cli_args = "FVInterfaceKernels/interface/subdomain1=1 FVInterfaceKernels/interface/subdomain2=1
+                Mesh/allow_renumbering=false"
+    expect_err = "FVInterfaceKernel 'interface' .* connecting subdomains 0 and 1, but this face does not connect the subdomains specified by 'subdomain1' and 'subdomain2'\."
+    design = 'FVInterfaceKernels/index.md'
+    issues = '#33435'
+    requirement = 'The system shall report an error when a finite volume interface kernel executes on a face that does not connect its declared subdomains.'
+  []
+  [ambiguous_orientation]
+    type = RunException
+    input = test.i
+    cli_args = "FVInterfaceKernels/interface/subdomain1='0 1' "
+              "FVInterfaceKernels/interface/subdomain2='0 1'"
+    expect_err = "both orientations satisfy the user-defined 'subdomain1' and 'subdomain2' restrictions, making the interface orientation ambiguous"
+    design = 'FVInterfaceKernels/index.md'
+    issues = '#33435'
+    requirement = 'The system shall report an error when overlapping finite volume interface kernel subdomain specifications make the interface orientation ambiguous.'
+  []
+  [external_face]
+    type = RunException
+    input = test.i
+    cli_args = "FVInterfaceKernels/interface/boundary=right"
+    expect_err = "FVInterfaceKernel 'interface' is being triggered on an external face .* An interface kernel requires elements on both sides of the face\."
+    design = 'FVInterfaceKernels/index.md'
+    issues = '#33435'
+    requirement = 'The system shall report an error when a finite volume interface kernel executes on a face without a neighboring element.'
+  []
+  [reversed_orientation]
+    type = RunApp
+    input = test.i
+    cli_args = "FVInterfaceKernels/interface/boundary=secondary_interface "
+               "FVInterfaceKernels/interface/subdomain1=1 "
+               "FVInterfaceKernels/interface/subdomain2=0 "
+               "FVInterfaceKernels/interface/coeff1=right "
+               "FVInterfaceKernels/interface/coeff2=left "
+               "Outputs/exodus=false"
+    design = 'FVInterfaceKernels/index.md'
+    issues = '#33334 #33435'
+    requirement = 'The system shall execute a finite volume interface kernel when the FaceInfo element lies on the user-defined second side of the interface.'
+  []
+
+  [first_order_convergence]
+    requirement = 'The system shall be able to solve a diffusion problem with finite volumes with the domain split in half and show first order convergence due to its treatment of coefficient discontinuities both'
+    design = 'FVOneVarDiffusionInterface.md'
+    [with-ik]
+      type = MMSTest
+      input = test.py
+      test_case = TestFVOneVarDiffusionInterface
+      detail = 'with an interfacing object'
+    []
+    [without-ik]
+      type = MMSTest
+      input = test.py
+      test_case = TestFVNoInterface
+      detail = 'without an interfacing object'
+    []
+  []
+  [harmonic]
+    requirement = "The system shall be able to solve a diffusion problem with finite volumes with "
+                  "the domain split in half and show second order convergence due to the harmonic "
+                  "interpolation of the diffusion coeffcient"
+    design = 'FVOneVarDiffusionInterface.md'
+    type = MMSTest
+    input = test.py
+    test_case = TestFVOneVarDiffusionInterfaceHarmonic
+  []
+  [resid_and_jac]
+    requirement = 'The system shall be able to compute the residual and Jacobian together for a finite volume interface kernel.'
+    design = 'FVOneVarDiffusionInterface.md'
+    issues = '#19444'
+    input = test.i
+    exodiff = test_out.e
+    type = Exodiff
+  []
+[]

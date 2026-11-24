@@ -1,0 +1,159 @@
+[Tests]
+  [GrandPotentialPFM]
+    type = 'Exodiff'
+    input = 'GrandPotentialPFM.i'
+    exodiff = 'GrandPotentialPFM_out.e'
+    issues = '#6977'
+    design = '/GrandPotentialKernelAction.md'
+    requirement = 'The system shall provide classes to implement a Grand Potential phase field '
+                  'formulation'
+  []
+  [GrandPotentialMultiphase]
+    type = 'Exodiff'
+    input = 'GrandPotentialMultiphase.i'
+    exodiff = 'GrandPotentialMultiphase_out.e'
+    issues = '#8213'
+    design = '/ACSwitching.md'
+    requirement = 'The system shall provide a Grand Potential based multiphase model'
+  []
+  [GrandPotentialAnisotropy]
+    type = 'Exodiff'
+    input = 'GrandPotentialAnisotropy.i'
+    exodiff = 'GrandPotentialAnisotropy_out.e'
+    abs_zero = 1e-8
+    issues = '#11802 #12554'
+    design = '/ACInterface2DMultiPhase1.md /ACInterface2DMultiPhase2.md '
+             '/InterfaceOrientationMultiphaseMaterial.md'
+    requirement = 'The system shall provide a Grand Potential based dendritic solidification '
+                  'capability in 2D'
+  []
+  [GrandPotentialStrictMassConservation]
+    type = 'Exodiff'
+    input = 'GrandPotentialStrictMassConservation.i'
+    exodiff = 'GrandPotentialStrictMassConservation_out.e'
+    custom_cmp = GrandPotentialStrictMassConservation.cmp
+    issues = '#23329'
+    design = '/GrandPotentialKernelAction.md'
+    requirement = 'The system shall provide classes to implement a Grand Potential phase field '
+                  'formulation with strict mass conservation'
+    capabilities = 'method!=dbg'
+    valgrind = 'heavy'
+  []
+  [GrandPotentialInterface]
+    type = 'CSVDiff'
+    input = 'GrandPotentialInterface.i'
+    csvdiff = 'GrandPotentialInterface_out_mat_0001.csv'
+    issues = '#12147 #33932'
+    design = '/GrandPotentialInterface.md'
+    requirement = 'The system shall provide a material to automatically compute grand potential '
+                  'model interface parameters based on provided interfacial free energies and widths'
+    valgrind = 'heavy'
+  []
+  [GrandPotentialInterface_moelans2009]
+    type = 'CSVDiff'
+    input = 'GrandPotentialInterface.i'
+    csvdiff = 'GrandPotentialInterface_moelans2009_out_mat_0001.csv'
+    cli_args = 'Materials/iface/interface_fit=moelans2009 '
+               'Outputs/file_base=GrandPotentialInterface_moelans2009_out'
+    issues = '#33932'
+    design = '/GrandPotentialInterface.md'
+    requirement = 'The system shall optionally compute grand potential model interface parameters '
+                  'with the earlier 2009 polynomial fits of Moelans to reproduce earlier results'
+  []
+  [GrandPotentialInterface_reference]
+    requirement = 'The system shall compute grand potential model interface parameters using as '
+                  'reference the interface with'
+    issues = '#33932'
+    design = '/GrandPotentialInterface.md'
+    [max]
+      type = 'CSVDiff'
+      input = 'GrandPotentialInterfaceReference.i'
+      csvdiff = 'GrandPotentialInterfaceReference_out_mat_0001.csv'
+      detail = 'the largest interfacial free energy by default, or'
+    []
+    [median]
+      type = 'CSVDiff'
+      input = 'GrandPotentialInterfaceReference.i'
+      csvdiff = 'GrandPotentialInterfaceReference_median_out_mat_0001.csv'
+      cli_args = 'Materials/iface/reference_sigma=median '
+                 'Outputs/file_base=GrandPotentialInterfaceReference_median_out'
+      detail = 'the median interfacial free energy.'
+    []
+  []
+  [GrandPotentialInterface_out_of_range]
+    type = 'RunException'
+    input = 'GrandPotentialInterface.i'
+    cli_args = "Materials/iface/sigma='0.1 1'"
+    expect_err = 'outside the range 0.098 <= g <= 0.766'
+    issues = '#33932'
+    design = '/GrandPotentialInterface.md'
+    requirement = 'The system shall report an error if an interfacial free energy lies outside the '
+                  'range covered by the polynomial fit used to compute the grand potential model '
+                  'interface parameters'
+  []
+  [GrandPotentialAnisotropyAntitrap]
+    type = 'Exodiff'
+    input = 'GrandPotentialAnisotropyAntitrap.i'
+    exodiff = 'GrandPotentialAnisotropyAntitrap_out.e'
+    issues = '#13373'
+    design = '/AntitrappingCurrent.md'
+    requirement = 'The system shall provide a Grand Potential based dendritic solidification '
+                  'capability for alloy with antitrapping current'
+  []
+  [SinteringBase]
+    type = 'Exodiff'
+    input = 'SinteringBase.i'
+    exodiff = 'SinteringBase_out.e'
+    issues = '#18420'
+    design = '/GrandPotentialSinteringMaterial.md'
+    requirement = 'The system shall provide a Grand Potential based sintering model'
+    abs_zero = 4e-10
+  []
+  [SinteringParabolic]
+    type = 'Exodiff'
+    input = 'SinteringParabolic.i'
+    exodiff = 'SinteringParabolic_out.e'
+    issues = '#18420'
+    design = '/GrandPotentialSinteringMaterial.md'
+    requirement = 'The system shall provide a Grand Potential based sintering model with parabolic '
+                  'defect free energies'
+  []
+  [SinteringDilute]
+    type = 'Exodiff'
+    input = 'SinteringDilute.i'
+    exodiff = 'SinteringDilute_out.e'
+    issues = '#18420'
+    design = '/GrandPotentialSinteringMaterial.md'
+    requirement = 'The system shall provide a Grand Potential based sintering model with dilute '
+                  'solution defect free energies'
+  []
+  [SinteringIdeal]
+    type = 'Exodiff'
+    input = 'SinteringIdeal.i'
+    exodiff = 'SinteringIdeal_out.e'
+    issues = '#18420'
+    design = '/GrandPotentialSinteringMaterial.md'
+    requirement = 'The system shall provide a Grand Potential based sintering model with ideal '
+                  'solution defect free energies'
+  []
+
+  [GrandPotentialMultiphase_ad]
+    type = 'Exodiff'
+    input = 'GrandPotentialMultiphase_AD.i'
+    exodiff = 'GrandPotentialMultiphase_out.e'
+    issues = '#15573'
+    design = '/ACSwitching.md /CoupledSwitchingTimeDerivative.md'
+    requirement = 'MOOSE shall provide a Grand Potential based multiphase model with AD option'
+  []
+
+  [ADGrandPotentialMultiphase_jac]
+    type = 'PetscJacobianTester'
+    input = 'GrandPotentialMultiphase_AD.i'
+    run_sim = 'True'
+    cli_args = 'Mesh/nx=3 Mesh/ny=3 Outputs/exodus=false Executioner/num_steps=1'
+    ratio_tol = 1e-7
+    issues = '#15573'
+    design = '/ACSwitching.md /CoupledSwitchingTimeDerivative.md'
+    requirement = 'The jacobian for the AD Allen-Cahn problem with a variable dependent coeffecients shall be perfect'
+  []
+[]

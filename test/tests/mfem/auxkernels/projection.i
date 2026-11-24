@@ -1,0 +1,151 @@
+[Mesh]
+  type = MFEMFileMesh
+  file = ../mesh/hinomaru.e
+[]
+
+[Problem]
+  type = MFEMProblem
+[]
+
+[FESpaces]
+  [H1FESpace]
+    type = MFEMScalarFESpace
+    fec_type = H1
+    fec_order = FIRST
+  []
+  [HCurlFESpace]
+    type = MFEMVectorFESpace
+    fec_type = ND
+    fec_order = FIRST
+  []
+  [L2FESpace]
+    type = MFEMScalarFESpace
+    fec_type = L2
+    fec_order = CONSTANT
+    basis = GaussLegendre
+  []
+[]
+
+[Variables]
+  [Az]
+    type = MFEMVariable
+    fespace = H1FESpace
+  []
+[]
+
+[AuxVariables]
+  [J]
+    type = MFEMVariable
+    fespace = L2FESpace
+  []
+  [GAz]
+    type = MFEMVariable
+    fespace = HCurlFESpace
+  []
+  [GAz(copy)]
+    type = MFEMVariable
+    fespace = HCurlFESpace
+  []
+[]
+
+[Kernels]
+  [diffusion]
+    type = MFEMDiffusionKernel
+    variable = Az
+  []
+  [source]
+    type = MFEMDomainLFKernel
+    variable = Az
+    coefficient = J_source
+  []
+[]
+
+[AuxKernels]
+  [J]
+    type = MFEMScalarProjectionAux
+    variable = J
+    coefficient = J_source
+  []
+  [GAz]
+    type = MFEMGradAux
+    variable = GAz
+    source = Az
+  []
+  [GAz(copy)]
+    type = MFEMVectorProjectionAux
+    variable = GAz(copy)
+    vector_coefficient = GAz
+  []
+[]
+
+[BCs]
+  [essential]
+    type = MFEMScalarDirichletBC
+    variable = Az
+    boundary = outer
+    coefficient = 1
+  []
+[]
+
+[FunctorMaterials]
+  [J_wire]
+    type = MFEMGenericFunctorMaterial
+    prop_names = J_source
+    prop_values = 8.0
+    block = wire
+  []
+[]
+
+
+[Solvers]
+  [boomeramg]
+    type = MFEMHypreBoomerAMG
+  []
+  [main]
+    type = MFEMHyprePCG
+    preconditioner = boomeramg
+    l_tol = 1e-16
+  []
+[]
+
+[Executioner]
+  type = MFEMSteady
+[]
+
+[VectorPostprocessors]
+  [line_sample_Az]
+    type = MFEMVariableLineValueSampler
+    variables = 'Az'
+    start_point = '-3 -2 0'
+    end_point = '3 2 0'
+    num_points = 101
+  []
+  [line_sample_J]
+    type = MFEMVariableLineValueSampler
+    variables = 'J'
+    start_point = '-2.9 -1.9 0'
+    end_point = '2.9 1.9 0'
+    num_points = 101
+  []
+  [line_sample_GAz]
+    type = MFEMVariableLineValueSampler
+    variables = 'GAz'
+    start_point = '-2.9 -1.9 0'
+    end_point = '2.9 1.9 0'
+    num_points = 101
+  []
+  [line_sample_GAz_copy]
+    type = MFEMVariableLineValueSampler
+    variables = 'GAz(copy)'
+    start_point = '-2.9 -1.9 0'
+    end_point = '2.9 1.9 0'
+    num_points = 101
+  []
+[]
+
+[Outputs]
+  [CSV]
+    type = CSV
+    file_base = OutputData/Projection/projection
+  []
+[]

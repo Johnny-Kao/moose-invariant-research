@@ -1,0 +1,426 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "PenaltyWeightedGapUserObject.h"
+#include "AugmentedLagrangianContactProblem.h"
+#include "AutomaticMortarGeneration.h"
+#include "MooseVariableFE.h"
+#include "SystemBase.h"
+
+registerMooseObject("ContactApp", PenaltyWeightedGapUserObject);
+
+const unsigned int PenaltyWeightedGapUserObject::_no_iterations = 0;
+
+InputParameters
+PenaltyWeightedGapUserObject::validParams()
+{
+  InputParameters params = WeightedGapUserObject::validParams();
+  // The weighted-gap object supplies penalty contact's nodal-normal point-neighbor matrix coupling.
+  addNodalNormalCoupling(params);
+  params.suppressParameter<bool>("ghost_point_neighbors");
+  params.addClassDescription("Computes the mortar normal contact force via a penalty approach.");
+  params.addRequiredParam<Real>("penalty", "The penalty factor");
+  params.addRangeCheckedParam<Real>(
+      "penalty_multiplier",
+      1.0,
+      "penalty_multiplier > 0",
+      "The penalty growth factor between augmented Lagrange "
+      "iterations if weighted gap does not get closed fast enough. For frictional simulations, "
+      "values smaller than 100 are recommended, e.g. 5.");
+  params.addParam<bool>(
+      "use_physical_gap",
+      false,
+      "Whether to compute the normal pressure as (penalty / A) * (physical gap) instead of penalty "
+      "* (weighted gap), where A is the lower-dimensional area assigned to the node on the "
+      "contacting boundary. This parameter is defaulted to 'true' in the contact action.");
+  params.addRangeCheckedParam<Real>(
+      "penetration_tolerance",
+      "penetration_tolerance > 0",
+      "Acceptable penetration distance at which augmented Lagrange iterations can be stopped");
+  params.addRangeCheckedParam<Real>(
+      "max_penalty_multiplier",
+      1.0e3,
+      "max_penalty_multiplier >= 1.0",
+      "Maximum multiplier applied to penalty factors when adaptivity is used in an augmented "
+      "Lagrange setting. The penalty factor supplied by the user is used as a reference.");
+  MooseEnum adaptivity_penalty_normal("SIMPLE BUSSETTA", "SIMPLE");
+  adaptivity_penalty_normal.addDocumentation(
+      "SIMPLE", "Keep multiplying by the penalty multiplier between AL iterations");
+  adaptivity_penalty_normal.addDocumentation(
+      "BUSSETTA",
+      "Modify the penalty using an algorithm from Bussetta et al, 2012, Comput Mech 49:259-275 "
+      "between AL iterations.");
+  params.addParam<MooseEnum>(
+      "adaptivity_penalty_normal",
+      adaptivity_penalty_normal,
+      "The augmented Lagrange update strategy used on the normal penalty coefficient.");
+  params.addCoupledVar(
+      "aux_lm",
+      "Auxiliary variable that is utilized together with the "
+      "penalty approach to interpolate the resulting contact tractions using dual bases.");
+  params.addParamNamesToGroup("penalty_multiplier penetration_tolerance max_penalty_multiplier",
+                              "Augmented Lagrange");
+
+  return params;
+}
+
+PenaltyWeightedGapUserObject::PenaltyWeightedGapUserObject(const InputParameters & parameters)
+  : WeightedGapUserObject(parameters),
+    AugmentedLagrangeInterface(this),
+    _penalty(getParam<Real>("penalty")),
+    _penalty_multiplier(getParam<Real>("penalty_multiplier")),
+    _penetration_tolerance(
+        isParamValid("penetration_tolerance") ? getParam<Real>("penetration_tolerance") : 0.0),
+    _augmented_lagrange_problem(
+        dynamic_cast<AugmentedLagrangianContactProblemInterface *>(&_fe_problem)),
+    _lagrangian_iteration_number(_augmented_lagrange_problem
+                                     ? _augmented_lagrange_problem->getLagrangianIterationNumber()
+                                     : _no_iterations),
+    _dof_to_lagrange_multiplier(declareRestartableData<std::unordered_map<dof_id_type, Real>>(
+        "dof_to_lagrange_multiplier")),
+    _t_step_old_normal(declareRestartableData<int>("t_step_old_normal", 0)),
+    _dt(_fe_problem.dt()),
+    _use_physical_gap(getParam<bool>("use_physical_gap")),
+    _aux_lm_var(isCoupled("aux_lm") ? getVar("aux_lm", 0) : nullptr),
+    _max_penalty_multiplier(getParam<Real>("max_penalty_multiplier")),
+    _adaptivity_normal(
+        getParam<MooseEnum>("adaptivity_penalty_normal").getEnum<AdaptivityNormalPenalty>())
+{
+  auto check_type = [this](const auto & var, const auto & var_name)
+  {
+    if (!var.isNodal())
+      paramError(var_name,
+                 "The displacement variables must have degrees of freedom exclusively on "
+                 "nodes, e.g. they should probably be of finite element type 'Lagrange'.");
+  };
+  check_type(*_disp_x_var, "disp_x");
+  check_type(*_disp_y_var, "disp_y");
+  if (_has_disp_z)
+    check_type(*_disp_z_var, "disp_z");
+
+  if (!_augmented_lagrange_problem == isParamValid("penetration_tolerance"))
+    paramError("penetration_tolerance",
+               "This parameter must be supplied if and only if an augmented Lagrange problem "
+               "object is used.");
+
+  // The penalty pressure is applied on every process contributing to a node's weighted gap (see
+  // constrainedByOwner()), so with point-neighbor coupling those processes need the couplings of
+  // nonlocal secondary elements. Cohesive zone models derive from this class and disable
+  // point-neighbor coupling.
+  if (getParam<bool>("ghost_point_neighbors"))
+    _fe_problem
+        .getMortarInterface(std::make_pair(_primary_id, _secondary_id),
+                            std::make_pair(_primary_subdomain_id, _secondary_subdomain_id),
+                            getParam<bool>("use_displaced_mesh"))
+        .requestNonlocalSecondaryCouplings();
+}
+
+const VariableTestValue &
+PenaltyWeightedGapUserObject::test() const
+{
+  return _aux_lm_var ? _aux_lm_var->phiLower() : _disp_x_var->phiLower();
+}
+
+const VariableTestValue &
+PenaltyWeightedGapUserObject::tractionBasis() const
+{
+  // Penalty contact interpolates traction and weighted gap with the same basis.
+  return test();
+}
+
+const ADVariableValue &
+PenaltyWeightedGapUserObject::contactPressure() const
+{
+  return _contact_pressure;
+}
+
+void
+PenaltyWeightedGapUserObject::selfInitialize()
+{
+  for (auto & dof_pn : _dof_to_normal_pressure)
+    dof_pn.second = 0.0;
+}
+
+void
+PenaltyWeightedGapUserObject::initialize()
+{
+  WeightedGapUserObject::initialize();
+  selfInitialize();
+}
+
+void
+PenaltyWeightedGapUserObject::selfFinalize()
+{
+  using std::min;
+
+  // compute new normal pressure for each node
+  for (const auto & [dof_object, wgap] : _dof_to_weighted_gap)
+  {
+    auto penalty = findValue(_dof_to_local_penalty, dof_object, _penalty);
+
+    const auto lagrange_multiplier =
+        _augmented_lagrange_problem ? _dof_to_lagrange_multiplier[dof_object->id()] : 0.0;
+
+    // keep the negative normal pressure (compressive per convention here)
+    auto normal_pressure = min(0.0, penaltyPressure(wgap, penalty) + lagrange_multiplier);
+
+    // we switch conventins here and consider positive normal pressure as compressive
+    _dof_to_normal_pressure[dof_object] = -normal_pressure;
+  }
+}
+
+void
+PenaltyWeightedGapUserObject::finalize()
+{
+  WeightedGapUserObject::finalize();
+  selfFinalize();
+}
+
+Real
+PenaltyWeightedGapUserObject::getNormalContactPressure(const Node * const node) const
+{
+  const auto it = _dof_to_normal_pressure.find(_subproblem.mesh().nodePtr(node->id()));
+
+  if (it != _dof_to_normal_pressure.end())
+    return MetaPhysicL::raw_value(it->second);
+  else
+    return 0.0;
+}
+
+Real
+PenaltyWeightedGapUserObject::getNormalLagrangeMultiplier(const Node * const node) const
+{
+  const auto it = _dof_to_lagrange_multiplier.find(node->id());
+
+  if (it != _dof_to_lagrange_multiplier.end())
+    return -MetaPhysicL::raw_value(it->second);
+  else
+    return 0.0;
+}
+
+void
+PenaltyWeightedGapUserObject::reinit()
+{
+  _contact_pressure.resize(_qrule_msm->n_points());
+  for (const auto qp : make_range(_qrule_msm->n_points()))
+    _contact_pressure[qp] = 0.0;
+
+  for (const auto i : make_range(_test->size()))
+  {
+    const Node * const node = _lower_secondary_elem->node_ptr(i);
+
+    for (const auto qp : make_range(_qrule_msm->n_points()))
+      _contact_pressure[qp] += (*_test)[i][qp] * _dof_to_normal_pressure[node];
+  }
+}
+
+ADReal
+PenaltyWeightedGapUserObject::nodalContactPressure(const Node & node) const
+{
+  // A node only enters this map once it has received a weighted-gap contribution, so a node on a
+  // partially integrated element may be absent. Absent means no contact pressure, matching how the
+  // interpolated pressure in reinit() treats it.
+  return findValue(_dof_to_normal_pressure, cast_ptr<const DofObject *>(&node), ADReal(0));
+}
+
+void
+PenaltyWeightedGapUserObject::selfTimestepSetup()
+{
+  // Let's not clear the LMs for improved performance in
+  // nonlinear problems
+
+  // timestepSetup() runs once per time step attempt, so on a retried timestep (e.g. --test-restep
+  // or a rejected step) the LMs hold the discarded attempt's values; restore the accepted ones
+  const bool retried_timestep = _fe_problem.timeStep() == _t_step_old_normal;
+  _t_step_old_normal = _fe_problem.timeStep();
+  if (retried_timestep)
+    _dof_to_lagrange_multiplier = _dof_to_lagrange_multiplier_start;
+  else
+    _dof_to_lagrange_multiplier_start = _dof_to_lagrange_multiplier;
+
+  // reset penalty
+  for (auto & dof_lp : _dof_to_local_penalty)
+    dof_lp.second = _penalty;
+
+  // clear previous gap
+  for (auto & dof_pg : _dof_to_previous_gap)
+    dof_pg.second = 0.0;
+
+  // save old timestep
+  _dt_old = _dt;
+}
+
+void
+PenaltyWeightedGapUserObject::timestepSetup()
+{
+  selfTimestepSetup();
+}
+
+bool
+PenaltyWeightedGapUserObject::isAugmentedLagrangianConverged()
+{
+  using std::max, std::min, std::abs;
+
+  Real max_positive_gap = 0.0;
+  Real min_negative_gap = 0.0;
+
+  // Get maximum gap to ascertain whether we are converged.
+  for (auto & [dof_object, wgap] : _dof_to_weighted_gap)
+  {
+    const auto gap = physicalGap(wgap);
+    {
+      // Check condition for nodes that are active
+      if (gap < 0 || _dof_to_lagrange_multiplier[dof_object->id()] < 0.0)
+      {
+        max_positive_gap = max(max_positive_gap, gap);
+        min_negative_gap = min(min_negative_gap, gap);
+      }
+    }
+  }
+
+  // Reduce the extreme gap values on all ranks so that every rank returns the same result
+  this->_communicator.max(max_positive_gap);
+  this->_communicator.min(min_negative_gap);
+
+  // report the gap value with the largest magnitude
+  const Real reported_gap =
+      -min_negative_gap > max_positive_gap ? min_negative_gap : max_positive_gap;
+  if (abs(reported_gap) > _penetration_tolerance)
+  {
+    mooseInfoRepeated("Gap tolerance fail max_gap = ",
+                      reported_gap,
+                      " (gap_tol=",
+                      _penetration_tolerance,
+                      "). Iteration number is: ",
+                      _lagrangian_iteration_number,
+                      ".");
+    return false;
+  }
+  else
+    mooseInfoRepeated("Gap tolerance success max_gap = ",
+                      reported_gap,
+                      " (gap_tol=",
+                      _penetration_tolerance,
+                      "). Iteration number is: ",
+                      _lagrangian_iteration_number,
+                      ".");
+
+  return true;
+}
+
+void
+PenaltyWeightedGapUserObject::augmentedLagrangianSetup()
+{
+  // Loop over all nodes for which a gap has been computed
+  for (auto & [dof_object, wgap] : _dof_to_weighted_gap)
+  {
+    const Real gap = physicalGap(wgap);
+    // Store previous augmented lagrange iteration gap
+    _dof_to_previous_gap[dof_object] = gap;
+  }
+}
+
+void
+PenaltyWeightedGapUserObject::updateAugmentedLagrangianMultipliers()
+{
+  using std::abs;
+
+  for (const auto & [dof_object, wgap] : _dof_to_weighted_gap)
+  {
+    auto & penalty = _dof_to_local_penalty[dof_object];
+    if (penalty == 0.0)
+      penalty = _penalty;
+
+    const auto gap = getNormalGap(static_cast<const Node *>(dof_object));
+    auto & lagrange_multiplier = _dof_to_lagrange_multiplier[dof_object->id()];
+
+    // Increment the multiplier by the penalty pressure computed in selfFinalize
+    const Real penalty_pressure = MetaPhysicL::raw_value(penaltyPressure(wgap, penalty));
+
+    // Update penalty (the factor of 1/4 is suggested in the literature, the limit on AL iteration
+    // caps the penalty increase)
+    // Before we were updating the LM before adapting the penalty factor
+    if (lagrange_multiplier + penalty_pressure <= 0)
+      lagrange_multiplier += penalty_pressure;
+    else
+      lagrange_multiplier = 0.0;
+
+    const auto previous_gap = _dof_to_previous_gap[dof_object];
+    Real eval_tn = 0;
+
+    if (_adaptivity_normal == AdaptivityNormalPenalty::SIMPLE)
+    {
+      if (abs(gap) > 0.25 * abs(previous_gap) && abs(gap) > _penetration_tolerance)
+        penalty *= _penalty_multiplier;
+    }
+    else if (_adaptivity_normal == AdaptivityNormalPenalty::BUSSETTA)
+      bussettaAdaptivePenalty(previous_gap, gap, penalty, eval_tn);
+
+    // Heuristics to bound the penalty factor
+    if (penalty < _penalty)
+      penalty = _penalty;
+    else if (penalty > _max_penalty_multiplier * _penalty)
+      penalty = _max_penalty_multiplier * _penalty;
+  }
+}
+
+void
+PenaltyWeightedGapUserObject::bussettaAdaptivePenalty(const Real previous_gap,
+                                                      const Real gap,
+                                                      Real & penalty,
+                                                      Real & eval_tn)
+{
+  // Positive gaps means no contact
+  if (previous_gap > 0.0)
+  {
+    penalty = _penalty;
+    eval_tn = 0.0;
+  }
+  else
+  {
+    if (previous_gap * gap < 0)
+      eval_tn = 0.0;
+    else
+      eval_tn = penalty * previous_gap;
+
+    adaptiveNormalPenalty(previous_gap, gap, penalty);
+  }
+}
+
+void
+PenaltyWeightedGapUserObject::adaptiveNormalPenalty(const Real previous_gap,
+                                                    const Real gap,
+                                                    Real & penalty)
+{
+  using std::abs, std::max, std::sqrt;
+
+  const bool condition_one = abs(abs(previous_gap / gap) - 1.0) < 0.01;
+  const bool condition_two = abs(gap) > 1.01 * abs(previous_gap);
+
+  if (previous_gap * gap < 0)
+  {
+    if (previous_gap > _penetration_tolerance)
+      penalty = abs(penalty * previous_gap / gap * (abs(gap) + _penetration_tolerance) /
+                    (gap - previous_gap));
+    else
+      penalty = abs(penalty * previous_gap / 10.0 / gap);
+  }
+  else if (abs(gap) > _penetration_tolerance)
+  {
+    if (abs(gap - previous_gap) >
+        max(gap / 10.0, max(previous_gap / 10.0, 5.0 * _penetration_tolerance)))
+      penalty *= 10.0;
+    else if (condition_one && gap < 10.0 * _penetration_tolerance)
+      penalty *= MathUtils::pow(sqrt(abs(gap) / _penetration_tolerance - 1.0) + 1.0, 2);
+    else if (condition_two)
+      penalty *= 10.0 * previous_gap / gap;
+    else
+      penalty *= sqrt(abs(gap) / _penetration_tolerance - 1.0) + 1.0;
+  }
+}

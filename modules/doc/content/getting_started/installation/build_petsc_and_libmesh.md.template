@@ -1,0 +1,38 @@
+```bash
+cd {{PATH}}/moose/scripts
+export MOOSE_JOBS=6 METHODS=opt
+./update_and_rebuild_petsc.sh {{PETSC_ARGS1}} {{PETSC_ARGS2}} || return
+./update_and_rebuild_libmesh.sh {{LIBMESH_ARGS1}} || return
+./update_and_rebuild_wasp.sh {{WASP_ARGS1}} || return
+```
+
+!alert! tip
+`MOOSE_JOBS` is a loose influential environment variable that dictates how many cores to use when
+executing many of our scripts. While operating on [!ac](INL) [!ac](HPC) login nodes alongside
+everyone else, it is courtesy to limit your CPU core usage. We prefer that users limit themselves to
+6:
+
+- `export MOOSE_JOBS=6`
+
+`METHODS` is an influential environment variable that dictates how to build libMesh. If this
+variable is not set, libMesh will by default build 4 methods (taking 4x longer to finish). Most of
+the time, folks will want to use optimized methods:
+
+- `export METHODS=opt`
+
+!alert-end!
+
+!alert! tip title=Building with compiler optimizations
+The build scripts forward any extra arguments to each package's configuration, so you can tune
+the stack to the machine you are building on by passing optimization flags. For example, to
+build with `-O3 -march=native`:
+
+- PETSc: add `COPTFLAGS="-O3 -march=native" CXXOPTFLAGS="-O3 -march=native" FOPTFLAGS="-O3 -march=native"`
+  to the `update_and_rebuild_petsc.sh` line. These are also applied to the packages PETSc builds
+  (hypre, MUMPS, SuperLU_DIST, etc.).
+- libMesh: add `libmesh_CFLAGS="-O3 -march=native" libmesh_CXXFLAGS="-O3 -march=native"` to the
+  `update_and_rebuild_libmesh.sh` line. Use these rather than `CXXFLAGS`, since they are what
+  libMesh exports for applications to compile against.
+
+MOOSE then inherits these flags from libMesh automatically.
+!alert-end!

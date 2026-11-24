@@ -1,0 +1,11 @@
+[Tests]
+  design = 'HeatConduction3EqnDGKernel.md'
+  issues = '#32558'
+  [mms]
+    type = MMSTest
+    input = 'test.py'
+    test_case = TestHeatConduction3Eqn
+    requirement = 'The system shall achieve the correct spatial convergence order with the heat conduction DG kernel for the single-phase flow model.'
+    min_slots = 2
+  []
+[]

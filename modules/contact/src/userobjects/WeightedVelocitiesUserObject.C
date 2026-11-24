@@ -1,0 +1,221 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "WeightedVelocitiesUserObject.h"
+#include "MooseVariableField.h"
+#include "SubProblem.h"
+#include "SystemBase.h"
+#include "MortarUtils.h"
+#include "MooseUtils.h"
+#include "MortarContactUtils.h"
+#include "AutomaticMortarGeneration.h"
+#include "libmesh/quadrature.h"
+
+InputParameters
+WeightedVelocitiesUserObject::validParams()
+{
+  InputParameters params = WeightedGapUserObject::validParams();
+  params.addRequiredParam<VariableName>("secondary_variable",
+                                        "Primal variable on secondary surface.");
+  params.addParam<VariableName>(
+      "primary_variable",
+      "Primal variable on primary surface. If this parameter is not provided then the primary "
+      "variable will be initialized to the secondary variable");
+  return params;
+}
+
+WeightedVelocitiesUserObject::WeightedVelocitiesUserObject(const InputParameters & parameters)
+  : WeightedGapUserObject(parameters),
+    // Must explicitly call this method on parameters due to GCC 14 bug
+    // in mail-archive.com/gcc-bugs@gcc.gnu.org/msg878282.html
+    _sys(*parameters.getCheckedPointerParam<SystemBase *>("_sys")),
+    _secondary_var(
+        isParamValid("secondary_variable")
+            ? _sys.getActualFieldVariable<Real>(_tid, parameters.getMooseType("secondary_variable"))
+            : _sys.getActualFieldVariable<Real>(_tid, parameters.getMooseType("primary_variable"))),
+    _primary_var(
+        isParamValid("primary_variable")
+            ? _sys.getActualFieldVariable<Real>(_tid, parameters.getMooseType("primary_variable"))
+            : _secondary_var),
+    _secondary_x_dot(_secondary_var.adUDot()),
+    _primary_x_dot(_primary_var.adUDotNeighbor()),
+    _secondary_y_dot(adCoupledDot("disp_y")),
+    _primary_y_dot(adCoupledNeighborValueDot("disp_y")),
+    _secondary_z_dot(_has_disp_z ? &adCoupledDot("disp_z") : nullptr),
+    _primary_z_dot(_has_disp_z ? &adCoupledNeighborValueDot("disp_z") : nullptr),
+    _3d(_has_disp_z)
+{
+  if (!getParam<bool>("use_displaced_mesh"))
+    paramError("use_displaced_mesh",
+               "'use_displaced_mesh' must be true for the WeightedVelocitiesUserObject object");
+}
+
+ADReal
+WeightedVelocitiesUserObject::nodalTangentialPressure(const Node & /*node*/,
+                                                      unsigned int /*direction*/) const
+{
+  mooseError("Nodal tangential pressure is not available for user object '", name(), "'.");
+}
+
+const std::array<ADRealVectorValue, 2> &
+WeightedVelocitiesUserObject::contactTangents(const Elem & lower_secondary_elem,
+                                              const unsigned int nodal_index) const
+{
+  mooseAssert(nodal_index < lower_secondary_elem.n_nodes(),
+              "Nodal tangent index must refer to a node on the secondary element.");
+  mooseAssert(shouldRecordNodalNormalDerivatives(),
+              "AD contact tangents should only be requested while recording nodal-normal "
+              "derivatives.");
+  const Node * const node = lower_secondary_elem.node_ptr(nodal_index);
+  auto it = _ad_nodal_tangents.find(node);
+  if (it == _ad_nodal_tangents.end())
+    it = _ad_nodal_tangents
+             .emplace(node,
+                      Moose::Mortar::nodalTangents(contactNormal(lower_secondary_elem, nodal_index),
+                                                   amg().dim()))
+             .first;
+
+#ifndef NDEBUG
+  // A cached frame must belong to the current geometry. The tolerance matches the stored versus AD
+  // nodal normal check in AutomaticMortarGeneration::computeADNodalNormals.
+  const auto & stored_tangents = amg().getNodalTangents(lower_secondary_elem);
+  for (const auto direction : make_range(2))
+    mooseAssert(
+        (MetaPhysicL::raw_value(it->second[direction]) - stored_tangents[direction][nodal_index])
+                .norm() < 1e-10,
+        "The stored and AD secondary nodal tangents must use the same geometry state.");
+#endif
+
+  return it->second;
+}
+
+void
+WeightedVelocitiesUserObject::computeQpProperties()
+{
+  // Compute the value of _qp_gap
+  WeightedGapUserObject::computeQpProperties();
+
+  // Trim derivatives
+  const auto & primary_ip_lowerd_map = amg().getPrimaryIpToLowerElementMap(
+      *_lower_primary_elem,
+      AutomaticMortarGeneration::primaryInteriorParentOrSelf(*_lower_primary_elem),
+      *_lower_secondary_elem);
+  const auto & secondary_ip_lowerd_map =
+      amg().getSecondaryIpToLowerElementMap(*_lower_secondary_elem);
+
+  std::array<const MooseVariable *, 3> var_array{{_disp_x_var, _disp_y_var, _disp_z_var}};
+  std::array<ADReal, 3> primary_disp_dot{
+      {_primary_x_dot[_qp], _primary_y_dot[_qp], _has_disp_z ? (*_primary_z_dot)[_qp] : 0}};
+  std::array<ADReal, 3> secondary_disp_dot{
+      {_secondary_x_dot[_qp], _secondary_y_dot[_qp], _has_disp_z ? (*_secondary_z_dot)[_qp] : 0}};
+
+  trimInteriorNodeDerivatives(primary_ip_lowerd_map, var_array, primary_disp_dot, false);
+  trimInteriorNodeDerivatives(secondary_ip_lowerd_map, var_array, secondary_disp_dot, true);
+
+  const ADReal & prim_x_dot = primary_disp_dot[0];
+  const ADReal & prim_y_dot = primary_disp_dot[1];
+  const ADReal * prim_z_dot = nullptr;
+  if (_has_disp_z)
+    prim_z_dot = &primary_disp_dot[2];
+
+  const ADReal & sec_x_dot = secondary_disp_dot[0];
+  const ADReal & sec_y_dot = secondary_disp_dot[1];
+  const ADReal * sec_z_dot = nullptr;
+  if (_has_disp_z)
+    sec_z_dot = &secondary_disp_dot[2];
+
+  // Build relative velocity vector
+  ADRealVectorValue relative_velocity;
+
+  if (_3d)
+    relative_velocity = {sec_x_dot - prim_x_dot, sec_y_dot - prim_y_dot, *sec_z_dot - *prim_z_dot};
+  else
+    relative_velocity = {sec_x_dot - prim_x_dot, sec_y_dot - prim_y_dot, 0.0};
+
+  // Geometry is averaged and used at the nodes for constraint enforcement.
+  _qp_real_tangential_velocity_nodal = relative_velocity;
+  _qp_tangential_velocity_nodal = relative_velocity * (_JxW_msm[_qp] * _coord[_qp]);
+}
+
+void
+WeightedVelocitiesUserObject::computeQpIProperties()
+{
+  WeightedGapUserObject::computeQpIProperties();
+
+  // Get the _dof_to_weighted_tangential_velocity map
+  const DofObject * const dof =
+      _is_weighted_gap_nodal ? cast_ptr<const DofObject *>(_lower_secondary_elem->node_ptr(_i))
+                             : cast_ptr<const DofObject *>(_lower_secondary_elem);
+
+  if (shouldRecordNodalNormalDerivatives())
+  {
+    const auto & tangents = contactTangents(*_lower_secondary_elem, _i);
+    for (const auto direction : make_range(_3d ? 2 : 1))
+    {
+      _dof_to_weighted_tangential_velocity[dof][direction] +=
+          (*_test)[_i][_qp] * _qp_tangential_velocity_nodal * tangents[direction];
+      _dof_to_real_tangential_velocity[dof][direction] +=
+          (*_test)[_i][_qp] * _qp_real_tangential_velocity_nodal * tangents[direction];
+    }
+  }
+  else
+  {
+    const auto & nodal_tangents = amg().getNodalTangents(*_lower_secondary_elem);
+
+    _dof_to_weighted_tangential_velocity[dof][0] +=
+        (*_test)[_i][_qp] * _qp_tangential_velocity_nodal * nodal_tangents[0][_i];
+    _dof_to_real_tangential_velocity[dof][0] +=
+        (*_test)[_i][_qp] * _qp_real_tangential_velocity_nodal * nodal_tangents[0][_i];
+
+    // Get the _dof_to_weighted_tangential_velocity map for a second direction
+    if (_3d)
+    {
+      _dof_to_weighted_tangential_velocity[dof][1] +=
+          (*_test)[_i][_qp] * _qp_tangential_velocity_nodal * nodal_tangents[1][_i];
+
+      _dof_to_real_tangential_velocity[dof][1] +=
+          (*_test)[_i][_qp] * _qp_real_tangential_velocity_nodal * nodal_tangents[1][_i];
+    }
+  }
+}
+
+void
+WeightedVelocitiesUserObject::selfInitialize()
+{
+  _dof_to_weighted_tangential_velocity.clear();
+  _dof_to_real_tangential_velocity.clear();
+  _ad_nodal_tangents.clear();
+}
+
+void
+WeightedVelocitiesUserObject::initialize()
+{
+  // Clear weighted gaps
+  WeightedGapUserObject::initialize();
+  selfInitialize();
+}
+
+void
+WeightedVelocitiesUserObject::finalize()
+{
+  WeightedGapUserObject::finalize();
+
+  // If the constraint is performed by the owner, then we don't need any data sent back; the owner
+  // will take care of it. But if the constraint is not performed by the owner and we might have to
+  // do some of the constraining ourselves, then we need data sent back to us
+  const bool send_data_back = !constrainedByOwner();
+
+  Moose::Mortar::Contact::communicateVelocities(_dof_to_weighted_tangential_velocity,
+                                                _subproblem.mesh(),
+                                                _nodal,
+                                                _communicator,
+                                                send_data_back);
+  Moose::Mortar::Contact::communicateVelocities(
+      _dof_to_real_tangential_velocity, _subproblem.mesh(), _nodal, _communicator, send_data_back);
+}

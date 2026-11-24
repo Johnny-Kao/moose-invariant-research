@@ -1,0 +1,16 @@
+[Tests]
+  design = 'FCTFdisplacementIC.md areva_fctf.md'
+  issues = '#30069 #29501'
+  [FCTF_ss]
+      type = CSVDiff
+      input = FCTF_deformed.i
+      csvdiff = FCTF_deformed_out.csv
+      heavy = true
+      capabilities = 'method!=dbg'
+      valgrind = NONE
+      recover = false
+      abs_zero = 1e-5
+      max_threads = 1
+      requirement = 'The system shall be able to model the deformed duct displacement in the AREVA_fctf simulation and produce consistent results'
+  []
+[]

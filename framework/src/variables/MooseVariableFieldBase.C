@@ -1,0 +1,33 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "MooseVariableFieldBase.h"
+#include "SubProblem.h"
+
+InputParameters
+MooseVariableFieldBase::validParams()
+{
+  return MooseVariableBase::validParams();
+}
+
+MooseVariableFieldBase::MooseVariableFieldBase(const InputParameters & parameters)
+  : MooseVariableBase(parameters)
+{
+}
+
+const std::string &
+MooseVariableFieldBase::componentName(const unsigned int comp) const
+{
+  if (comp >= _count)
+    mooseError("componentName(): Component index is not less than the number of components");
+  if (isArray())
+    return this->arrayVariableComponent(comp);
+  else
+    return name();
+}

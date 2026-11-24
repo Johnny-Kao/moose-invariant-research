@@ -1,0 +1,74 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+#ifdef MOOSE_LIBTORCH_ENABLED
+
+#pragma once
+
+#include "MooseTypes.h"
+#include <vector>
+#include "DataIO.h"
+
+#include "LibtorchUtils.h"
+
+namespace StochasticTools
+{
+
+/// Class for standardizing data (centering and scaling)
+
+class Standardizer
+{
+public:
+  Standardizer() = default;
+
+  /// Methods for setting mean and standard deviation directly
+  /// Sets mean=0, std=1 for n variables
+  void set(const Real & n);
+  /// Sets mean and std for a single variable
+  void set(const Real & mean, const Real & stdev);
+  /// Sets mean and std for a n variables variable
+  void set(const Real & mean, const Real & stdev, const Real & n);
+  /// Sets mean and std directly using provided vectors
+  void set(const std::vector<Real> & mean, const std::vector<Real> & stdev);
+
+  /// Get the mean vector
+  const torch::Tensor & getMean() const { return _mean; }
+  /// Get the standard deviation vector
+  const torch::Tensor & getStdDev() const { return _stdev; }
+
+  /// Methods for computing and setting mean and standard deviation
+  void computeSet(const torch::Tensor & input);
+
+  /// Helper for dataStore
+  void dataStore(std::ostream & stream, void * context) const;
+
+  /// Returns the standardized (centered and scaled) of the provided input
+  void getStandardized(torch::Tensor & input) const;
+
+  /// De-standardizes (de-centered and de-scaled) the assumed standardized input
+  void getDestandardized(torch::Tensor & input) const;
+
+  /// De-scales the assumed scaled input
+  void getDescaled(torch::Tensor & input) const;
+
+  /// Scales the assumed de-scaled input
+  void getScaled(torch::Tensor & input) const;
+
+protected:
+  torch::Tensor _mean;
+  torch::Tensor _stdev;
+};
+
+} // StochasticTools namespace
+
+template <>
+void dataStore(std::ostream & stream, StochasticTools::Standardizer & standardizer, void * context);
+template <>
+void dataLoad(std::istream & stream, StochasticTools::Standardizer & standardizer, void * context);
+
+#endif

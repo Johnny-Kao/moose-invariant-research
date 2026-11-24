@@ -1,0 +1,59 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "SCMPinPowerPostprocessor.h"
+#include "FEProblemBase.h"
+#include "MooseMesh.h"
+#include "SCM.h"
+#include "SubChannel1PhaseProblem.h"
+
+registerMooseObject("SubChannelApp", SCMPinPowerPostprocessor);
+
+InputParameters
+SCMPinPowerPostprocessor::validParams()
+{
+  InputParameters params = GeneralPostprocessor::validParams();
+  params.addClassDescription(
+      "Calculates the total heat rate that goes into the coolant from all the heated fuel-pins "
+      "based on aux variable q_prime");
+  return params;
+}
+
+SCMPinPowerPostprocessor::SCMPinPowerPostprocessor(const InputParameters & parameters)
+  : GeneralPostprocessor(parameters),
+    _mesh(SCM::getConstMesh<SubChannelMesh>(_fe_problem.mesh())),
+    _scm_problem(SCM::getConstProblem<SubChannel1PhaseProblem>(_fe_problem)),
+    _value(0)
+{
+}
+
+void
+SCMPinPowerPostprocessor::execute()
+{
+  const auto nz = _mesh.getNumOfAxialCells();
+  const auto n_channels = _mesh.getNumOfChannels();
+  auto power = 0.0;
+  for (unsigned int iz = 1; iz < nz + 1; iz++)
+    for (unsigned int i_ch = 0; i_ch < n_channels; i_ch++)
+      power += _scm_problem.getAddedHeatPin(i_ch, iz);
+  _value = power;
+}
+
+void
+SCMPinPowerPostprocessor::finalize()
+{
+  // The subchannel solution is only available on processor 0
+  _communicator.broadcast(_value);
+}
+
+Real
+SCMPinPowerPostprocessor::getValue() const
+{
+  return _value;
+}

@@ -1,0 +1,174 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#pragma once
+
+#include "LinearFVFluxKernel.h"
+#include "FVAdvectedInterpolationMethod.h"
+#include "FVInterpolationMethodInterface.h"
+
+#include <array>
+
+class RhieChowMassFlux;
+class LinearFVBoundaryCondition;
+class LinearFVAdvectionDiffusionBC;
+class LinearFVGradientReader;
+
+/**
+ * Kernel that implements the stress tensor and advection terms for the momentum
+ * equation.
+ */
+class LinearWCNSFVMomentumFlux : public LinearFVFluxKernel, public FVInterpolationMethodInterface
+{
+public:
+  static InputParameters validParams();
+
+  /**
+   * Class constructor.
+   * @param params The InputParameters for the kernel.
+   */
+  LinearWCNSFVMomentumFlux(const InputParameters & params);
+
+  virtual Real computeElemMatrixContribution() override;
+
+  virtual Real computeNeighborMatrixContribution() override;
+
+  virtual Real computeElemRightHandSideContribution() override;
+
+  virtual Real computeNeighborRightHandSideContribution() override;
+
+  virtual Real computeBoundaryMatrixContribution(const LinearFVBoundaryCondition & bc) override;
+
+  virtual Real computeBoundaryRHSContribution(const LinearFVBoundaryCondition & bc) override;
+
+  /**
+   * Set the current FaceInfo object. We override this here to make sure the face velocity
+   * evaluation happens only once and that it can be reused for the matrix and right hand side
+   * contributions.
+   * @param face_info The face info which will be used as current face info
+   */
+  virtual void setupFaceData(const FaceInfo * face_info) override;
+
+protected:
+  /// Computes the matrix contribution of the advective flux on the element side of current face
+  /// when the face is an internal face (doesn't have associated boundary conditions).
+  Real computeInternalAdvectionElemMatrixContribution();
+
+  /// Computes the matrix contribution of the advective flux on the neighbor side of current face
+  /// when the face is an internal face (doesn't have associated boundary conditions).
+  Real computeInternalAdvectionNeighborMatrixContribution();
+
+  /// Computes the matrix contribution of the stress term on the current face
+  /// when the face is an internal face (doesn't have associated boundary conditions).
+  Real computeInternalStressMatrixContribution();
+
+  /// Computes the right hand side contribution of the stress term on the current face
+  /// when the face is an internal face (doesn't have associated boundary conditions).
+  Real computeInternalStressRHSContribution();
+
+  /// Computes the implicit internal-face stress transmissibility.
+  Real computeInternalStressTransmissibility() const;
+
+  /// Computes the explicit internal-face stress correction.
+  Real computeInternalStressExplicitCorrection() const;
+
+  /**
+   * Compute the explicit stress correction reconstructed from one adjacent cell.
+   * @param cell_info The cell where velocity gradients and values are evaluated
+   * @param nonorthogonal_correction_vector The geometric correction vector for this cell
+   */
+  Real computeCellStressExplicitCorrection(
+      const ElemInfo & cell_info, const RealVectorValue & nonorthogonal_correction_vector) const;
+
+  /// Computes the matrix contributions of the boundary conditions resulting from the stress tensor
+  /// @param bc The boundary condition whose contributions should be used
+  Real computeStressBoundaryMatrixContribution(const LinearFVAdvectionDiffusionBC * bc);
+
+  /// Computes the right hand side contributions of the boundary conditions resulting
+  /// from the stress tensor
+  /// @param bc The boundary condition whose contributions should be used
+  Real computeStressBoundaryRHSContribution(const LinearFVAdvectionDiffusionBC * bc);
+
+  /// Computes the matrix contributions of the boundary conditions resulting
+  /// from the advection term
+  /// @param bc The boundary condition whose contributions should be used
+  virtual Real computeAdvectionBoundaryMatrixContribution(const LinearFVAdvectionDiffusionBC * bc);
+
+  /// Computes the right hand side contributions of the boundary conditions resulting
+  /// from the advection term
+  /// @param bc The boundary condition whose contributions should be used
+  virtual Real computeAdvectionBoundaryRHSContribution(const LinearFVAdvectionDiffusionBC * bc);
+
+  /// The dimension of the mesh
+  const unsigned int _dim;
+
+  /// The Rhie-Chow user object that provides us with the face velocity
+  const RhieChowMassFlux & _mass_flux_provider;
+
+  /// The functor for the dynamic viscosity
+  const Moose::Functor<Real> & _mu;
+
+  /// Switch to enable/disable nonorthogonal correction in the stress term
+  const bool _use_nonorthogonal_correction;
+
+  /// Switch to enable/disable deviatoric parts in the stress term
+  const bool _use_deviatoric_terms;
+
+  /// The interpolation method to use for the advected quantity
+  const FVAdvectedInterpolationMethod & _adv_interp_method;
+
+  /// Gradient field used by advected interpolations that require gradients.
+  const LinearFVGradientReader * const _advected_gradient_field;
+
+  /// Current advected interpolation contribution on the face
+  FVAdvectedInterpolationMethod::AdvectedSystemContribution _adv_interp_result;
+
+  /// Reusable gradient storage used when advected interpolation requires gradients.
+  VectorValue<Real> _elem_grad_storage;
+  VectorValue<Real> _neighbor_grad_storage;
+
+  /// Container for the mass flux on the face which will be reused in the advection term's
+  /// matrix and right hand side contribution
+  Real _face_mass_flux;
+
+  /// Multiplier that ensures the normal of the boundary always points outwards, even in cases
+  /// when the boundary is within the mesh.
+  Real _boundary_normal_factor;
+
+  /// The cached matrix contribution
+  Real _stress_matrix_contribution;
+
+  /// The cached right hand side contribution
+  Real _stress_rhs_contribution;
+
+  /// Index x|y|z, this is mainly to handle the deviatoric parts correctly in
+  /// in the stress term
+  const unsigned int _index;
+
+  /// Velocity variables for each coordinate direction
+  std::array<const MooseLinearVariableFVReal *, 3> _velocity_vars;
+
+  /// Gradient field used for the kernel variable nonorthogonal correction.
+  const LinearFVGradientReader * _gradient_field;
+
+  /// Gradient fields used for velocity variables in deviatoric stress terms.
+  std::array<const LinearFVGradientReader *, 3> _velocity_gradient_fields;
+
+  /// Coordinate system of the blocks this kernel operates on
+  const Moose::CoordinateSystemType _coord_type;
+
+  /// Axisymmetric radial coordinate index (only used when in RZ)
+  const unsigned int _rz_radial_coord;
+
+  /// Helper to access the velocity variable for a given direction
+  const MooseLinearVariableFVReal & velocityVar(unsigned int dir) const;
+
+  /// Helper to access the velocity gradient field for a given direction
+  const LinearFVGradientReader & velocityGradientField(unsigned int dir) const;
+};

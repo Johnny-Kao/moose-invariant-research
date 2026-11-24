@@ -1,0 +1,599 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#pragma once
+
+#include "FEProblemBase.h"
+#include "ADReal.h"
+#include "RankTwoTensor.h"
+#include "MooseMesh.h"
+#include "MathUtils.h"
+
+#include "libmesh/dof_object.h"
+
+#include "metaphysicl/parallel_dualnumber.h"
+#include "metaphysicl/parallel_semidynamicsparsenumberarray.h"
+
+#include "timpi/parallel_sync.h"
+#include "timpi/communicator.h"
+#include "libmesh/data_type.h"
+#include "libmesh/parallel_algebra.h"
+#include "timpi/parallel_sync.h"
+
+#include <utility>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <unordered_map>
+#include <vector>
+
+namespace TIMPI
+{
+
+template <>
+class StandardType<ADRankTwoTensor> : public DataType
+{
+public:
+  explicit StandardType(const ADRankTwoTensor * example = nullptr)
+    : DataType(StandardType<ADReal>(example ? &((*example)(0, 0)) : nullptr),
+               LIBMESH_DIM * LIBMESH_DIM)
+  {
+  }
+
+  inline ~StandardType() { this->free(); }
+
+  static const bool is_fixed_type = true;
+};
+
+} // namespace TIMPI
+
+namespace Moose
+{
+namespace Mortar
+{
+namespace Contact
+{
+enum class FrictionProjectionDegree
+{
+  ONE,
+  TWO
+};
+
+/**
+ * Return the augmented normal pressure p_n - C_n g_bar.
+ * @param normal_pressure The normal contact pressure p_n
+ * @param scaled_normal_gap The normal gap g_bar scaled by a factor C_n, intended to bring it onto
+ * the order of the contact pressure for a well-conditioned complementarity function
+ * @return The augmented normal pressure
+ */
+template <typename T>
+T
+augmentedNormalPressure(const T & normal_pressure, const T & scaled_normal_gap)
+{
+  return normal_pressure - scaled_normal_gap;
+}
+
+/**
+ * Return the nonnegative Coulomb friction radius.
+ * @param friction_coefficient The Coulomb friction coefficient
+ * @param augmented_normal_pressure The augmented normal pressure (see \p augmentedNormalPressure)
+ * @return The Coulomb friction radius, clamped to be nonnegative
+ */
+template <typename T>
+T
+coulombFrictionRadius(const T & friction_coefficient, const T & augmented_normal_pressure)
+{
+  return friction_coefficient * std::max(T(0), augmented_normal_pressure);
+}
+
+/**
+ * Project \p vector onto a closed sphere centered at the origin with radius \p radius.
+ * @param vector The vector to project
+ * @param radius The radius of the closed sphere to project onto
+ * @return \p vector unchanged if its norm is already within \p radius, otherwise \p vector scaled
+ * down to have norm \p radius
+ */
+template <typename T, std::size_t N>
+std::array<T, N>
+projectToClosedSphere(const std::array<T, N> & vector, const T & radius)
+{
+  const T norm = MathUtils::norm(vector);
+  if (norm <= radius)
+    return vector;
+
+  std::array<T, N> projection;
+  for (const auto i : index_range(projection))
+    projection[i] = radius * vector[i] / norm;
+  return projection;
+}
+
+/**
+ * Return the degree-one Alart-Curnier friction residual
+ * p_t - Proj_{B_radius}(q_t).
+ * @param tangential_pressure The tangential contact pressure p_t
+ * @param augmented_tangential_pressure The velocity-augmented tangential pressure q_t (see \p
+ * frictionalContactResidual)
+ * @param radius The Coulomb friction radius (see \p coulombFrictionRadius)
+ * @return The degree-one Alart-Curnier friction residual
+ */
+template <typename T, std::size_t N>
+std::array<T, N>
+alartCurnierFrictionResidual(const std::array<T, N> & tangential_pressure,
+                             const std::array<T, N> & augmented_tangential_pressure,
+                             const T & radius)
+{
+  const auto projection = projectToClosedSphere(augmented_tangential_pressure, radius);
+  std::array<T, N> residual;
+  for (const auto i : index_range(residual))
+    residual[i] = tangential_pressure[i] - projection[i];
+  return residual;
+}
+
+/**
+ * Same as the three-argument \p alartCurnierFrictionResidual, but additionally short-circuits to
+ * the trivial identity residual whenever the raw, unaugmented normal contact pressure
+ * \p normal_pressure falls below \p epsilon, mirroring the epsilon-gated
+ * \p hueberStadlerWohlmuthFrictionResidual overload below so both friction-residual degrees
+ * apply the same active-set transition guard.
+ * @param tangential_pressure The tangential contact pressure p_t
+ * @param augmented_tangential_pressure The velocity-augmented tangential pressure q_t (see \p
+ * frictionalContactResidual)
+ * @param radius The Coulomb friction radius (see \p coulombFrictionRadius)
+ * @param normal_pressure The raw, unaugmented normal contact pressure
+ * @param epsilon The minimum normal contact pressure required to enable frictional enforcement
+ * @return The epsilon-gated, degree-one Alart-Curnier friction residual
+ */
+template <typename T, std::size_t N>
+std::array<T, N>
+alartCurnierFrictionResidual(const std::array<T, N> & tangential_pressure,
+                             const std::array<T, N> & augmented_tangential_pressure,
+                             const T & radius,
+                             const T & normal_pressure,
+                             const T & epsilon)
+{
+  if (normal_pressure < epsilon)
+    return tangential_pressure;
+
+  return alartCurnierFrictionResidual(tangential_pressure, augmented_tangential_pressure, radius);
+}
+
+/**
+ * Return the degree-two Hueber-Stadler-Wohlmuth friction residual
+ * max(radius, ||q_t||) p_t - radius q_t.
+ *
+ * At radius = ||q_t|| = 0 the degree-two expression vanishes for every p_t. Returning p_t in
+ * that state preserves the Coulomb solution set during separation.
+ * @param tangential_pressure The tangential contact pressure p_t
+ * @param augmented_tangential_pressure The velocity-augmented tangential pressure q_t (see \p
+ * frictionalContactResidual)
+ * @param radius The Coulomb friction radius (see \p coulombFrictionRadius)
+ * @return The degree-two Hueber-Stadler-Wohlmuth friction residual
+ */
+template <typename T, std::size_t N>
+std::array<T, N>
+hueberStadlerWohlmuthFrictionResidual(const std::array<T, N> & tangential_pressure,
+                                      const std::array<T, N> & augmented_tangential_pressure,
+                                      const T & radius)
+{
+  const T augmented_norm = MathUtils::norm(augmented_tangential_pressure);
+  const T weight = std::max(radius, augmented_norm);
+  if (weight == 0)
+    return tangential_pressure;
+
+  std::array<T, N> residual;
+  for (const auto i : index_range(residual))
+    residual[i] = weight * tangential_pressure[i] - radius * augmented_tangential_pressure[i];
+  return residual;
+}
+
+/**
+ * Same as the three-argument \p hueberStadlerWohlmuthFrictionResidual, but additionally
+ * short-circuits to the trivial identity residual whenever the raw, unaugmented normal
+ * contact pressure \p normal_pressure falls below \p epsilon.
+ *
+ * The pure weight == 0 condition in the three-argument overload is an exact mathematical
+ * criterion, but it is a poor numerical proxy for "this dof is separated" during Newton
+ * iteration: \p augmented_tangential_pressure includes a c_t-scaled tangential velocity term
+ * that is essentially never exactly zero in floating point, so the full weight/radius expression
+ * stays active even for dofs whose normal contact state is still swinging between contact
+ * and separation as the active set settles. Because that expression is only piecewise smooth
+ * across the active-set boundary, evaluating it on a dof that has not yet settled can inject a
+ * large, poorly conditioned residual and Jacobian row into that Newton step. Gating on the raw
+ * normal Lagrange multiplier instead is a coarser but cheaper and more conservative criterion:
+ * it forces such transitioning dofs onto the trivial identity residual (a well-conditioned,
+ * constant-derivative Jacobian row) until the normal contact state has clearly resolved,
+ * trading a small amount of formulation fidelity for solver robustness during that transient.
+ * @param tangential_pressure The tangential contact pressure p_t
+ * @param augmented_tangential_pressure The velocity-augmented tangential pressure q_t (see \p
+ * frictionalContactResidual)
+ * @param radius The Coulomb friction radius (see \p coulombFrictionRadius)
+ * @param normal_pressure The raw, unaugmented normal contact pressure
+ * @param epsilon The minimum normal contact pressure required to enable frictional enforcement
+ * @return The epsilon-gated, degree-two Hueber-Stadler-Wohlmuth friction residual
+ */
+template <typename T, std::size_t N>
+std::array<T, N>
+hueberStadlerWohlmuthFrictionResidual(const std::array<T, N> & tangential_pressure,
+                                      const std::array<T, N> & augmented_tangential_pressure,
+                                      const T & radius,
+                                      const T & normal_pressure,
+                                      const T & epsilon)
+{
+  if (normal_pressure < epsilon)
+    return tangential_pressure;
+
+  return hueberStadlerWohlmuthFrictionResidual(
+      tangential_pressure, augmented_tangential_pressure, radius);
+}
+
+/**
+ * Compute the epsilon-gated frictional residual for a mortar contact node. This composes the
+ * tangential pressure augmentation \p tangential_pressure + c_t * tangential_velocity * dt with
+ * \p augmentedNormalPressure, \p coulombFrictionRadius, and the epsilon-gated, degree-selected
+ * (\p projection_degree) friction residual (\p alartCurnierFrictionResidual for
+ * FrictionProjectionDegree::ONE, \p hueberStadlerWohlmuthFrictionResidual for
+ * FrictionProjectionDegree::TWO), the composition shared by the normal, dynamic, and Cartesian
+ * mortar frictional contact constraints.
+ * @param tangential_pressure The tangential contact pressure p_t
+ * @param tangential_velocity The relative (slip) velocity between the secondary and primary
+ * surfaces, resolved into the local tangential direction(s) at this node
+ * @param c_t Numerical factor used in the tangential constraints for convergence purposes
+ * @param dt The current time step size
+ * @param normal_pressure The raw, unaugmented normal contact pressure
+ * @param scaled_normal_gap The normal gap g_bar scaled by a factor C_n, intended to bring it onto
+ * the order of the contact pressure for a well-conditioned complementarity function
+ * @param friction_coefficient The Coulomb friction coefficient
+ * @param epsilon The minimum normal contact pressure required to enable frictional enforcement
+ * @param projection_degree Which friction-residual projection degree to use
+ * @return The epsilon-gated frictional residual
+ */
+template <typename T, std::size_t N>
+std::array<T, N>
+frictionalContactResidual(const std::array<T, N> & tangential_pressure,
+                          const std::array<T, N> & tangential_velocity,
+                          const T & c_t,
+                          const T & dt,
+                          const T & normal_pressure,
+                          const T & scaled_normal_gap,
+                          const T & friction_coefficient,
+                          const T & epsilon,
+                          const FrictionProjectionDegree projection_degree)
+{
+  std::array<T, N> augmented_tangential_pressure;
+  for (const auto i : index_range(augmented_tangential_pressure))
+    augmented_tangential_pressure[i] = tangential_pressure[i] + c_t * tangential_velocity[i] * dt;
+
+  const auto radius = coulombFrictionRadius(
+      friction_coefficient, augmentedNormalPressure(normal_pressure, scaled_normal_gap));
+
+  switch (projection_degree)
+  {
+    case FrictionProjectionDegree::ONE:
+      return alartCurnierFrictionResidual(
+          tangential_pressure, augmented_tangential_pressure, radius, normal_pressure, epsilon);
+    case FrictionProjectionDegree::TWO:
+      return hueberStadlerWohlmuthFrictionResidual(
+          tangential_pressure, augmented_tangential_pressure, radius, normal_pressure, epsilon);
+    default:
+      mooseError("Unhandled projection degree");
+  }
+}
+
+/**
+ * This function is used to communicate velocities across processes
+ * @param dof_to_weighted_gap Map from degree of freedom to weighted (weak) gap
+ * @param mesh Mesh used to locate nodes or elements
+ * @param nodal Whether the element has Lagrange interpolation
+ * @param communicator Process communicator
+ * @param send_data_back Whether to send back data to a distributed constraint
+ */
+template <typename T>
+inline void
+communicateVelocities(std::unordered_map<const DofObject *, T> & dof_map,
+                      const MooseMesh & mesh,
+                      const bool nodal,
+                      const Parallel::Communicator & communicator,
+                      const bool send_data_back)
+{
+  libmesh_parallel_only(communicator);
+  const auto our_proc_id = communicator.rank();
+
+  // We may have weighted velocity information that should go to other processes that own the dofs
+  using Datum = std::pair<dof_id_type, T>;
+  std::unordered_map<processor_id_type, std::vector<Datum>> push_data;
+
+  for (auto & pr : dof_map)
+  {
+    const auto * const dof_object = pr.first;
+    const auto proc_id = dof_object->processor_id();
+    if (proc_id == our_proc_id)
+      continue;
+
+    push_data[proc_id].push_back(std::make_pair(dof_object->id(), std::move(pr.second)));
+  }
+
+  const auto & lm_mesh = mesh.getMesh();
+  std::unordered_map<processor_id_type, std::vector<const DofObject *>>
+      pid_to_dof_object_for_sending_back;
+
+  auto action_functor =
+      [nodal, our_proc_id, &lm_mesh, &dof_map, &pid_to_dof_object_for_sending_back, send_data_back](
+          const processor_id_type pid, const std::vector<Datum> & sent_data)
+  {
+    mooseAssert(pid != our_proc_id, "We do not send messages to ourself here");
+    libmesh_ignore(our_proc_id);
+
+    for (auto & pr : sent_data)
+    {
+      const auto dof_id = pr.first;
+      const auto * const dof_object = nodal ? cast_ptr<const DofObject *>(lm_mesh.node_ptr(dof_id))
+                                            : cast_ptr<const DofObject *>(lm_mesh.elem_ptr(dof_id));
+      mooseAssert(dof_object, "This should be non-null");
+
+      if (send_data_back)
+        pid_to_dof_object_for_sending_back[pid].push_back(dof_object);
+
+      dof_map[dof_object][0] += pr.second[0];
+      dof_map[dof_object][1] += pr.second[1];
+    }
+  };
+
+  TIMPI::push_parallel_vector_data(communicator, push_data, action_functor);
+
+  // Now send data back if requested
+  if (!send_data_back)
+    return;
+
+  std::unordered_map<processor_id_type, std::vector<Datum>> push_back_data;
+
+  for (const auto & [pid, dof_objects] : pid_to_dof_object_for_sending_back)
+  {
+    auto & pid_send_data = push_back_data[pid];
+    pid_send_data.reserve(dof_objects.size());
+    for (const DofObject * const dof_object : dof_objects)
+    {
+      const auto & [tangent_one, tangent_two] = libmesh_map_find(dof_map, dof_object);
+      pid_send_data.push_back({dof_object->id(), {tangent_one, tangent_two}});
+    }
+  }
+
+  auto sent_back_action_functor =
+      [nodal, our_proc_id, &lm_mesh, &dof_map](const processor_id_type libmesh_dbg_var(pid),
+                                               const std::vector<Datum> & sent_data)
+  {
+    mooseAssert(pid != our_proc_id, "We do not send messages to ourself here");
+    libmesh_ignore(our_proc_id);
+
+    for (auto & [dof_id, tangents] : sent_data)
+    {
+      const auto * const dof_object = nodal ? cast_ptr<const DofObject *>(lm_mesh.node_ptr(dof_id))
+                                            : cast_ptr<const DofObject *>(lm_mesh.elem_ptr(dof_id));
+      mooseAssert(dof_object, "This should be non-null");
+      auto & [our_tangent_one, our_tangent_two] = dof_map[dof_object];
+      our_tangent_one = tangents[0];
+      our_tangent_two = tangents[1];
+    }
+  };
+
+  TIMPI::push_parallel_vector_data(communicator, push_back_data, sent_back_action_functor);
+}
+
+/**
+ * This function is used to communicate velocities across processes
+ * @param dof_map_adr2t Map from degree of freedom to weighted tank two tensor
+ * @param mesh Mesh used to locate nodes or elements
+ * @param nodal Whether the element has Lagrange interpolation
+ * @param communicator Process communicator
+ * @param send_data_back Whether to send back data to a distributed constraint
+ */
+inline void
+communicateR2T(std::unordered_map<const DofObject *, ADRankTwoTensor> & dof_map_adr2t,
+               const MooseMesh & mesh,
+               const bool nodal,
+               const Parallel::Communicator & communicator,
+               const bool send_data_back)
+{
+  libmesh_parallel_only(communicator);
+  const auto our_proc_id = communicator.rank();
+
+  // We may have weighted velocity information that should go to other processes that own the dofs
+  using Datum = std::pair<dof_id_type, ADRankTwoTensor>;
+  std::unordered_map<processor_id_type, std::vector<Datum>> push_data;
+
+  for (auto & pr : dof_map_adr2t)
+  {
+    const auto * const dof_object = pr.first;
+    const auto proc_id = dof_object->processor_id();
+    if (proc_id == our_proc_id)
+      continue;
+
+    push_data[proc_id].push_back(std::make_pair(dof_object->id(), std::move(pr.second)));
+  }
+
+  const auto & lm_mesh = mesh.getMesh();
+  std::unordered_map<processor_id_type, std::vector<const DofObject *>>
+      pid_to_dof_object_for_sending_back;
+
+  auto action_functor =
+      [nodal,
+       our_proc_id,
+       &lm_mesh,
+       &dof_map_adr2t,
+       &pid_to_dof_object_for_sending_back,
+       send_data_back](const processor_id_type pid, const std::vector<Datum> & sent_data)
+  {
+    mooseAssert(pid != our_proc_id, "We do not send messages to ourself here");
+    libmesh_ignore(our_proc_id);
+
+    for (auto & pr : sent_data)
+    {
+      const auto dof_id = pr.first;
+      const auto * const dof_object = nodal ? cast_ptr<const DofObject *>(lm_mesh.node_ptr(dof_id))
+                                            : cast_ptr<const DofObject *>(lm_mesh.elem_ptr(dof_id));
+      mooseAssert(dof_object, "This should be non-null");
+
+      if (send_data_back)
+        pid_to_dof_object_for_sending_back[pid].push_back(dof_object);
+
+      for (const auto i : make_range(3))
+        for (const auto j : make_range(3))
+          dof_map_adr2t[dof_object](i, j) += pr.second(i, j);
+    }
+  };
+
+  TIMPI::push_parallel_vector_data(communicator, push_data, action_functor);
+
+  // Now send data back if requested
+  if (!send_data_back)
+    return;
+
+  std::unordered_map<processor_id_type, std::vector<Datum>> push_back_data;
+
+  for (const auto & [pid, dof_objects] : pid_to_dof_object_for_sending_back)
+  {
+    auto & pid_send_data = push_back_data[pid];
+    pid_send_data.reserve(dof_objects.size());
+    for (const DofObject * const dof_object : dof_objects)
+    {
+      const auto & r2t = libmesh_map_find(dof_map_adr2t, dof_object);
+      pid_send_data.push_back({dof_object->id(), r2t});
+    }
+  }
+
+  auto sent_back_action_functor =
+      [nodal, our_proc_id, &lm_mesh, &dof_map_adr2t](const processor_id_type libmesh_dbg_var(pid),
+                                                     const std::vector<Datum> & sent_data)
+  {
+    mooseAssert(pid != our_proc_id, "We do not send messages to ourself here");
+    libmesh_ignore(our_proc_id);
+
+    for (auto & [dof_id, r2t_sent] : sent_data)
+    {
+      const auto * const dof_object = nodal ? cast_ptr<const DofObject *>(lm_mesh.node_ptr(dof_id))
+                                            : cast_ptr<const DofObject *>(lm_mesh.elem_ptr(dof_id));
+      mooseAssert(dof_object, "This should be non-null");
+      auto & r2t = dof_map_adr2t[dof_object];
+      r2t = r2t_sent;
+    }
+  };
+
+  TIMPI::push_parallel_vector_data(communicator, push_back_data, sent_back_action_functor);
+}
+
+template <typename T>
+void
+communicateRealObject(std::unordered_map<const DofObject *, T> & dof_to_adreal,
+                      const MooseMesh & mesh,
+                      const bool nodal,
+                      const Parallel::Communicator & communicator,
+                      const bool send_data_back)
+{
+  libmesh_parallel_only(communicator);
+  const auto our_proc_id = communicator.rank();
+
+  // We may have weighted gap information that should go to other processes that own the dofs
+  using Datum = std::tuple<dof_id_type, T>;
+  std::unordered_map<processor_id_type, std::vector<Datum>> push_data;
+
+  for (auto & pr : dof_to_adreal)
+  {
+    const auto * const dof_object = pr.first;
+    const auto proc_id = dof_object->processor_id();
+    if (proc_id == our_proc_id)
+      continue;
+
+    push_data[proc_id].push_back(std::make_tuple(dof_object->id(), std::move(pr.second)));
+  }
+
+  const auto & lm_mesh = mesh.getMesh();
+  std::unordered_map<processor_id_type, std::vector<const DofObject *>>
+      pid_to_dof_object_for_sending_back;
+
+  auto action_functor =
+      [nodal,
+       our_proc_id,
+       &lm_mesh,
+       &dof_to_adreal,
+       &pid_to_dof_object_for_sending_back,
+       send_data_back](const processor_id_type pid, const std::vector<Datum> & sent_data)
+  {
+    mooseAssert(pid != our_proc_id, "We do not send messages to ourself here");
+    libmesh_ignore(our_proc_id);
+
+    for (auto & [dof_id, weighted_gap] : sent_data)
+    {
+      const auto * const dof_object = nodal ? cast_ptr<const DofObject *>(lm_mesh.node_ptr(dof_id))
+                                            : cast_ptr<const DofObject *>(lm_mesh.elem_ptr(dof_id));
+      mooseAssert(dof_object, "This should be non-null");
+      if (send_data_back)
+        pid_to_dof_object_for_sending_back[pid].push_back(dof_object);
+      auto & our_adreal = dof_to_adreal[dof_object];
+      our_adreal += weighted_gap;
+    }
+  };
+
+  TIMPI::push_parallel_vector_data(communicator, push_data, action_functor);
+
+  // Now send data back if requested
+  if (!send_data_back)
+    return;
+
+  std::unordered_map<processor_id_type, std::vector<Datum>> push_back_data;
+
+  for (const auto & [pid, dof_objects] : pid_to_dof_object_for_sending_back)
+  {
+    auto & pid_send_data = push_back_data[pid];
+    pid_send_data.reserve(dof_objects.size());
+    for (const DofObject * const dof_object : dof_objects)
+    {
+      const auto & our_adreal = libmesh_map_find(dof_to_adreal, dof_object);
+      pid_send_data.push_back(std::make_tuple(dof_object->id(), our_adreal));
+    }
+  }
+
+  auto sent_back_action_functor =
+      [nodal, our_proc_id, &lm_mesh, &dof_to_adreal](const processor_id_type libmesh_dbg_var(pid),
+                                                     const std::vector<Datum> & sent_data)
+  {
+    mooseAssert(pid != our_proc_id, "We do not send messages to ourself here");
+    libmesh_ignore(our_proc_id);
+
+    for (auto & [dof_id, adreal] : sent_data)
+    {
+      const auto * const dof_object = nodal ? cast_ptr<const DofObject *>(lm_mesh.node_ptr(dof_id))
+                                            : cast_ptr<const DofObject *>(lm_mesh.elem_ptr(dof_id));
+      mooseAssert(dof_object, "This should be non-null");
+      auto & our_adreal = dof_to_adreal[dof_object];
+      our_adreal = adreal;
+    }
+  };
+  TIMPI::push_parallel_vector_data(communicator, push_back_data, sent_back_action_functor);
+}
+
+/**
+ * This function is used to communicate gaps across processes
+ * @param dof_to_weighted_gap Map from degree of freedom to weighted (weak) gap
+ * @param mesh Mesh used to locate nodes or elements
+ * @param nodal Whether the element has Lagrange interpolation
+ * @param normalize_c Whether to normalize with size the c coefficient in contact constraint
+ * @param communicator Process communicator
+ * @param send_data_back After aggregating data on the owning process, whether to send the aggregate
+ * back to senders. This can be necessary for things like penalty contact in which the constraint is
+ * not enforced by the owner but in a weighted way by the displacement constraints
+ */
+void communicateGaps(
+    std::unordered_map<const DofObject *, std::pair<ADReal, Real>> & dof_to_weighted_gap,
+    const MooseMesh & mesh,
+    bool nodal,
+    bool normalize_c,
+    const Parallel::Communicator & communicator,
+    bool send_data_back);
+}
+}
+}

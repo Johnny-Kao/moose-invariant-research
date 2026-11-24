@@ -1,0 +1,41 @@
+[Tests]
+  design = 'QuadSubChannel1PhaseProblem.md'
+  issues = '#28497 #34303'
+  [steady]
+    type = CSVDiff
+    input = steady.i
+    csvdiff = 'steady_out.csv steady_out_fluid_0001.csv steady_out_pins_0001.csv'
+    recover = false
+    abs_zero = 1e-7
+    max_threads = 1
+    # The crossflow solve does not converge in every iteration; remove once #34306 is fixed
+    allow_warnings = true
+    requirement = 'The system shall be able to restart after a steady state solution'
+  []
+  [transient]
+    type = CSVDiff
+    input = transient.i
+    csvdiff = 'transient_out.csv transient_out_fluid_0000.csv transient_out_fluid_0001.csv
+               transient_out_fluid_0002.csv transient_out_pins_0000.csv transient_out_pins_0001.csv
+               transient_out_pins_0002.csv'
+    prereq = 'steady'
+    abs_zero = 5e-6
+    max_threads = 1
+    # The crossflow solve does not converge in every iteration; remove once #34306 is fixed
+    allow_warnings = true
+    # The time = 0 outputs (row 0 of transient_out.csv and the *_0000.csv files)
+    # must match the final steady outputs
+    requirement = 'The system shall be able to restart a transient from a steady state solution'
+  []
+  [transient_time_integrator_warning]
+    type = RunApp
+    input = transient.i
+    prereq = 'steady'
+    cli_args = 'Executioner/scheme=bdf2 Outputs/file_base=transient_time_integrator_warning'
+    allow_warnings = true
+    expect_out = "The subchannel solver always uses implicit (backward) Euler time integration; the requested 'BDF2' time integrator is ignored."
+    match_literal = true
+    max_threads = 1
+    requirement = 'The system shall warn when a subchannel transient input requests a MOOSE time integrator other than implicit Euler.'
+  []
+[]

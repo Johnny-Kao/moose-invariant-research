@@ -1,0 +1,11 @@
+[Tests]
+  [./test]
+    # Test close pack ic generator (2D)
+    type = Exodiff
+    input = MaskedBodyForce_test.i
+    exodiff = MaskedBodyForce_test_out.e
+    issues = '#4620'
+    design = 'MaskedBodyForce.md'
+    requirement = 'The system shall provide a body-force kernel whose contribution is masked by a material property.'
+  [../]
+[]

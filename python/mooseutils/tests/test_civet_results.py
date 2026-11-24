@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+# This file is part of the MOOSE framework
+# https://mooseframework.inl.gov
+#
+# All rights reserved, see COPYRIGHT for full restrictions
+# https://github.com/idaholab/moose/blob/master/COPYRIGHT
+#
+# Licensed under LGPL 2.1, please see LICENSE for details
+# https://www.gnu.org/licenses/lgpl-2.1.html
+
+import collections
+import sys
+import unittest
+import mooseutils
+import mooseutils.civet_results as cr
+
+SITE = "https://civet.inl.gov"
+REPO = "idaholab/moose"
+SHAS = [
+    "681ba2f4274dc8465bb2a54e1353cfa24765a5c1",
+    "febe3476040fe6af1df1d67e8cc8c04c4760afb6",
+]
+
+
+class Test(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.jobs = cr._get_remote_civet_jobs(SHAS, SITE, REPO)
+
+    def testProcessResultsFormats(self):
+        """
+        Non-network regression test for TEST_RE/_process_results, covering test output
+        lines both without and with the optional memory field.
+        """
+        job = cr.Job(1, "results_1_recipe.tar.gz", cr.JobFileStatus.LOCAL, None)
+
+        content_without_memory = (
+            "[0.530s]       OK  kernels/simple_diffusion.test [recover]\n"
+        )
+        content_with_memory = (
+            "[0.530s] [ 123MB]       OK  kernels/simple_diffusion.test [recover]\n"
+        )
+        for content in (content_without_memory, content_with_memory):
+            database = collections.defaultdict(lambda: collections.defaultdict(list))
+            cr._process_results(database, job, "06_Test_-p_3", content, None)
+            tests = database["kernels/simple_diffusion.test"][1]
+            self.assertEqual(len(tests), 1)
+            self.assertEqual(tests[0].status, "OK")
+            self.assertEqual(tests[0].caveats, ["recover"])
+
+    def testGetCivetJobs(self):
+        jobs = self.jobs
+        self.assertEqual(len(jobs), 67)
+        self.assertEqual(jobs[0].number, 443457)
+        self.assertTrue(jobs[0].filename.endswith("results_443457.tar.gz"))
+        self.assertEqual(jobs[0].url, SITE)
+
+    def assertKnownTest(self, database):
+        """Assert the known kernels/simple_diffusion.test entry for job 443499 is present."""
+        tests = database["kernels/simple_diffusion.test"][443499]
+        self.assertEqual(tests[1].recipe, "06_Test_-p_3")
+        self.assertEqual(tests[1].status, "OK")
+        self.assertEqual(tests[1].caveats, ["recover"])
+        self.assertEqual(tests[1].url, SITE)
+        self.assertEqual(tests[1].reason, "")
+
+    def testUpdateDatabaseFromJob(self):
+        jobs = self.jobs
+        database = collections.defaultdict(lambda: collections.defaultdict(list))
+        cr._update_database_from_job(jobs[42], database, None)
+        self.assertKnownTest(database)
+
+    def testGetCivetResults(self):
+        database = cr.get_civet_results(hashes=SHAS, site=(SITE, REPO))
+        self.assertKnownTest(database)
+
+    @unittest.skipIf(sys.version_info < (3, 7), "Python 3.7 or greater required.")
+    def testGetCivetHashes(self):
+
+        # Release 2021-05-18
+        gold = (
+            "90123e7b6bd52f1bc36e68aac5d1fa95e76aeb91",
+            "d72a8d0d69e21b4945eedf2e78a7de80b1bd3e6f",
+        )
+        hashes = mooseutils.get_civet_hashes("2021-05-18")
+        self.assertEqual(hashes, gold)
+
+        gold = (
+            "df827bfaf6ea29394ce609bdf032bd40a9818cfc",
+            "c4ec8d4669166086da10470cc99c4b40813eeee9",
+        )
+        hashes = mooseutils.get_civet_hashes("df827bfaf6ea29394ce609bdf032bd40a9818cfc")
+        self.assertEqual(hashes, gold)
+
+
+if __name__ == "__main__":
+    unittest.main(module=__name__, verbosity=2)

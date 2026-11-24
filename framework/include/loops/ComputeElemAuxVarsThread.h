@@ -1,0 +1,56 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#pragma once
+
+#include "libmesh/elem_range.h"
+
+// MOOSE includes
+#include "ThreadedElementLoop.h"
+#include "TheWarehouse.h"
+
+// Forward declarations
+class FEProblemBase;
+class AuxiliarySystem;
+
+template <typename AuxKernelType>
+class ComputeElemAuxVarsThread : public ThreadedElementLoop<ConstElemRange>
+{
+public:
+  ComputeElemAuxVarsThread(FEProblemBase & problem,
+                           const TheWarehouse::Query & query,
+                           bool need_materials);
+  // Splitting Constructor
+  ComputeElemAuxVarsThread(ComputeElemAuxVarsThread & x, Threads::split split);
+
+  virtual ~ComputeElemAuxVarsThread();
+
+  virtual void subdomainChanged() override;
+  virtual void onElement(const Elem * elem) override;
+  virtual void post() override;
+
+  void join(const ComputeElemAuxVarsThread & /*y*/);
+
+protected:
+  /// Print list of object types executed and in which order
+  void printGeneralExecutionInformation() const override;
+
+  /// Print list of specific objects executed and in which order
+  void printBlockExecutionInformation() const override;
+
+  AuxiliarySystem & _aux_sys;
+
+  /// Query for every kernel this loop may run, before restricting to a block or boundary. Only
+  /// used to list them in the debug execution output; the loop itself queries the cache below.
+  const TheWarehouse::Query _all_kernels_query;
+  /// mutable since printBlockExecutionInformation() is const but the query cache still mutates
+  mutable TheWarehouse::QueryCache<AttribThread, AttribSubdomains> _query_subdomain;
+
+  bool _need_materials;
+};

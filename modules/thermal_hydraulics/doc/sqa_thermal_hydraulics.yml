@@ -1,0 +1,18 @@
+directories:
+    - ${MOOSE_DIR}/modules/thermal_hydraulics/test/tests
+    - ${MOOSE_DIR}/modules/thermal_hydraulics/unit/src
+specs:
+    - tests
+    - '*.unit_tests'
+dependencies:
+    - framework
+    - fluid_properties
+    - heat_transfer
+    - navier_stokes
+    - misc
+    - ray_tracing
+    - rdg
+    - solid_properties
+repos:
+    default: https://github.com/idaholab/moose
+reports: !include ${MOOSE_DIR}/modules/thermal_hydraulics/doc/sqa_reports.yml

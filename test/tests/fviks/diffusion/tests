@@ -1,0 +1,39 @@
+[Tests]
+  [diffusion]
+    issues = '#17638'
+    design = 'FVDiffusionInterface.md'
+    requirement = 'The system shall be able to solve a diffusion problem with the domain split in half and two finite volume variables living on each side.'
+    type = Exodiff
+    input = test.i
+    exodiff = 'test_out.e'
+  []
+  [diffusion-harmonic]
+    issues = '#21923'
+    design = 'FVDiffusionInterface.md'
+    requirement = 'The system shall be able to solve a diffusion problem with the domain split in half and two finite volume variables living on each side and interpolating the diffusivities using a harmonic mean.'
+    type = Exodiff
+    input = test.i
+    exodiff = 'harmonic.e'
+    cli_args = "FVKernels/diff_left/coeff_interp_method=harmonic "
+               "FVKernels/diff_right/coeff_interp_method=harmonic "
+               "FVInterfaceKernels/interface/coeff_interp_method=harmonic "
+               "Outputs/file_base='harmonic'"
+  []
+  [diffusion-multisystem]
+    issues = '#25599'
+    design = 'FVDiffusionInterface.md Problem/index.md'
+    requirement = 'The system shall be able to solve a block-restricted diffusion problem where the variables live on different nonlinear systems.'
+    type = Exodiff
+    input = multisystem.i
+    exodiff = 'multisystem_out.e'
+  []
+
+  [invalid-extended-sideset]
+    type = RunException
+    input = invalid_extended_sideset.i
+    expect_err = "FVInterfaceKernel 'interface' is being triggered on a face .* connecting subdomains (1 and 2|2 and 1), but this face does not connect the subdomains specified by 'subdomain1' and 'subdomain2'\."
+    requirement = 'The system shall report an error when a finite volume interface kernel sideset extends beyond the configured pair of subdomains.'
+    design = 'FVDiffusionInterface.md FVInterfaceKernels/index.md'
+    issues = '#21346 #33435'
+  []
+[]

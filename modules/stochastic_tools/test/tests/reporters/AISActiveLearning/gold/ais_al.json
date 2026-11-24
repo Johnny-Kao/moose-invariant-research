@@ -1,0 +1,1332 @@
+{
+    "reporters": {
+        "adaptive_MC": {
+            "type": "AdaptiveMonteCarloDecision",
+            "values": {
+                "inputs": {
+                    "type": "std::vector<std::vector<double>>"
+                },
+                "output_required": {
+                    "type": "std::vector<double>"
+                }
+            }
+        },
+        "ais_stats": {
+            "type": "AdaptiveImportanceStats",
+            "values": {
+                "cov_pf": {
+                    "type": "std::vector<double>"
+                },
+                "mu_imp": {
+                    "type": "std::vector<double>"
+                },
+                "pf": {
+                    "type": "std::vector<double>"
+                },
+                "std_imp": {
+                    "type": "std::vector<double>"
+                }
+            }
+        },
+        "conditional": {
+            "type": "ActiveLearningGPDecision",
+            "values": {
+                "flag_sample": {
+                    "type": "std::vector<bool>"
+                },
+                "gp_mean": {
+                    "type": "std::vector<double>"
+                },
+                "gp_std": {
+                    "type": "std::vector<double>"
+                },
+                "inputs": {
+                    "type": "std::vector<std::vector<double>>"
+                },
+                "need_sample": {
+                    "row_begin": 0,
+                    "row_end": 1,
+                    "type": "std::vector<bool>"
+                },
+                "reporter_transfer:average:value": {
+                    "row_begin": 0,
+                    "row_end": 1,
+                    "type": "std::vector<double>"
+                },
+                "reporter_transfer:converged": {
+                    "row_begin": 0,
+                    "row_end": 1,
+                    "type": "std::vector<bool>"
+                }
+            }
+        }
+    },
+    "time_steps": [
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.0
+                    ],
+                    [
+                        0.0
+                    ]
+                ],
+                "output_required": [
+                    0.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.0
+                ],
+                "gp_std": [
+                    0.0
+                ],
+                "inputs": [
+                    [
+                        7.4502508606855145e-09,
+                        1.0000000074502509
+                    ]
+                ],
+                "need_sample": [
+                    true
+                ],
+                "reporter_transfer:average:value": [
+                    0.0
+                ],
+                "reporter_transfer:converged": [
+                    false
+                ]
+            },
+            "time": 0.0,
+            "time_step": 0
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        7.4502508606855145e-09
+                    ],
+                    [
+                        1.0000000074502509
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.0
+                ],
+                "gp_std": [
+                    0.0
+                ],
+                "inputs": [
+                    [
+                        7.4502508606855145e-09,
+                        1.0000000074502509
+                    ]
+                ],
+                "need_sample": [
+                    true
+                ],
+                "reporter_transfer:average:value": [
+                    0.48717958796409677
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 1.0,
+            "time_step": 1
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.6428937459370051
+                    ],
+                    [
+                        1.318744588103803
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.0
+                ],
+                "gp_std": [
+                    0.0
+                ],
+                "inputs": [
+                    [
+                        0.6428937459370051,
+                        1.318744588103803
+                    ]
+                ],
+                "need_sample": [
+                    true
+                ],
+                "reporter_transfer:average:value": [
+                    0.9556701410711311
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 2.0,
+            "time_step": 2
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        -0.33348561609363714
+                    ],
+                    [
+                        1.1327475007983165
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.0
+                ],
+                "gp_std": [
+                    0.0
+                ],
+                "inputs": [
+                    [
+                        -0.33348561609363714,
+                        1.1327475007983165
+                    ]
+                ],
+                "need_sample": [
+                    true
+                ],
+                "reporter_transfer:average:value": [
+                    0.38938406986356067
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 3.0,
+            "time_step": 3
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        -0.7028620784593692
+                    ],
+                    [
+                        1.6699202100348063
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.0
+                ],
+                "gp_std": [
+                    0.0
+                ],
+                "inputs": [
+                    [
+                        -0.7028620784593692,
+                        1.6699202100348063
+                    ]
+                ],
+                "need_sample": [
+                    true
+                ],
+                "reporter_transfer:average:value": [
+                    0.47113097505769824
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 4.0,
+            "time_step": 4
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        -0.103
+                    ],
+                    [
+                        1.239
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.0
+                ],
+                "gp_std": [
+                    0.0
+                ],
+                "inputs": [
+                    [
+                        -1.0516631969278145,
+                        0.2530926919168911
+                    ]
+                ],
+                "need_sample": [
+                    true
+                ],
+                "reporter_transfer:average:value": [
+                    -0.3890472437943592
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 5.0,
+            "time_step": 5
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.0810565809651077
+                    ],
+                    [
+                        2.0971012008427286
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    1.0358113007823606
+                ],
+                "gp_std": [
+                    0.08203515632042994
+                ],
+                "inputs": [
+                    [
+                        0.0810565809651077,
+                        2.0971012008427286
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    1.0358113007823606
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 6.0,
+            "time_step": 6
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.4016554009814463
+                    ],
+                    [
+                        1.3026135737388445
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.8367539943285869
+                ],
+                "gp_std": [
+                    0.008315774799138616
+                ],
+                "inputs": [
+                    [
+                        0.4016554009814463,
+                        1.3026135737388445
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.8367539943285869
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 7.0,
+            "time_step": 7
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.20421846351744155
+                    ],
+                    [
+                        1.5041042506776015
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.8397592351374396
+                ],
+                "gp_std": [
+                    0.02624069662115864
+                ],
+                "inputs": [
+                    [
+                        0.20421846351744155,
+                        1.5041042506776015
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.8397592351374396
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 8.0,
+            "time_step": 8
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.9928312375321264
+                    ],
+                    [
+                        1.4430386850085584
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    1.1617715273730416
+                ],
+                "gp_std": [
+                    0.013120970406092572
+                ],
+                "inputs": [
+                    [
+                        0.9928312375321264,
+                        1.4430386850085584
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    1.1617715273730416
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 9.0,
+            "time_step": 9
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        2.0626020849835305
+                    ],
+                    [
+                        1.0770742816728762
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    1.343915130178703
+                ],
+                "gp_std": [
+                    0.18067201222394957
+                ],
+                "inputs": [
+                    [
+                        2.0626020849835305,
+                        1.0770742816728762
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    1.343915130178703
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 10.0,
+            "time_step": 10
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.7347326228099469
+                    ],
+                    [
+                        1.2027370259275787
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.9403534884674498
+                ],
+                "gp_std": [
+                    0.014280278688412442
+                ],
+                "inputs": [
+                    [
+                        0.7347326228099469,
+                        1.2027370259275787
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.9403534884674498
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 11.0,
+            "time_step": 11
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.8638108794460897
+                    ],
+                    [
+                        0.8087335783927179
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.7983056574785432
+                ],
+                "gp_std": [
+                    0.04954413254814437
+                ],
+                "inputs": [
+                    [
+                        0.8638108794460897,
+                        0.8087335783927179
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.7983056574785432
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 12.0,
+            "time_step": 12
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.08696909838765232
+                    ],
+                    [
+                        1.6475175428555444
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.8498861456065243
+                ],
+                "gp_std": [
+                    0.037156834652696175
+                ],
+                "inputs": [
+                    [
+                        0.08696909838765232,
+                        1.6475175428555444
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.8498861456065243
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 13.0,
+            "time_step": 13
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.6021853470104611
+                    ],
+                    [
+                        1.009683980434676
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.7834654842633869
+                ],
+                "gp_std": [
+                    0.019336058541118372
+                ],
+                "inputs": [
+                    [
+                        0.6021853470104611,
+                        1.009683980434676
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.7834654842633869
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 14.0,
+            "time_step": 14
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.43452253463089335
+                    ],
+                    [
+                        0.5858347660090757
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.0
+                ],
+                "mu_imp": [
+                    0.0
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.0
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.4816693590007266
+                ],
+                "gp_std": [
+                    0.02566962381056924
+                ],
+                "inputs": [
+                    [
+                        0.43452253463089335,
+                        0.5858347660090757
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.4816693590007266
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 15.0,
+            "time_step": 15
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.0895460884363315
+                    ],
+                    [
+                        0.8875630510457353
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    null
+                ],
+                "mu_imp": [
+                    0.626822372135168,
+                    0.5373675548652045
+                ],
+                "pf": [
+                    0.0
+                ],
+                "std_imp": [
+                    0.8967730149450356,
+                    0.6229186223354394
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.47274669295728705
+                ],
+                "gp_std": [
+                    0.00430036040802655
+                ],
+                "inputs": [
+                    [
+                        0.0895460884363315,
+                        0.8875630510457353
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.47274669295728705
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 16.0,
+            "time_step": 16
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.2817923315095926
+                    ],
+                    [
+                        1.3744493452684472
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.7071067811865476
+                ],
+                "mu_imp": [
+                    0.626822372135168,
+                    0.5373675548652045
+                ],
+                "pf": [
+                    0.15705693315908567
+                ],
+                "std_imp": [
+                    0.8967730149450356,
+                    0.6229186223354394
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.8148474776863807
+                ],
+                "gp_std": [
+                    0.01594871592534247
+                ],
+                "inputs": [
+                    [
+                        0.2817923315095926,
+                        1.3744493452684472
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.8148474776863807
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 17.0,
+            "time_step": 17
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        -0.24656558088358926
+                    ],
+                    [
+                        1.5475187476851384
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.7071067811865476
+                ],
+                "mu_imp": [
+                    0.626822372135168,
+                    0.5373675548652045
+                ],
+                "pf": [
+                    0.15705693315908567
+                ],
+                "std_imp": [
+                    0.8967730149450356,
+                    0.6229186223354394
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    true
+                ],
+                "gp_mean": [
+                    0.6393518411262273
+                ],
+                "gp_std": [
+                    0.02104346722719712
+                ],
+                "inputs": [
+                    [
+                        -0.24656558088358926,
+                        1.5475187476851384
+                    ]
+                ],
+                "need_sample": [
+                    true
+                ],
+                "reporter_transfer:average:value": [
+                    0.6337978183195624
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 18.0,
+            "time_step": 18
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        -0.24656558088358926
+                    ],
+                    [
+                        1.5475187476851384
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.8660254037844387
+                ],
+                "mu_imp": [
+                    0.626822372135168,
+                    0.5373675548652045
+                ],
+                "pf": [
+                    0.07852846657954284
+                ],
+                "std_imp": [
+                    0.8967730149450356,
+                    0.6229186223354394
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.6337978573850551
+                ],
+                "gp_std": [
+                    5.759431788019938e-05
+                ],
+                "inputs": [
+                    [
+                        -0.24656558088358926,
+                        1.5475187476851384
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.6337978573850551
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 19.0,
+            "time_step": 19
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.5136432643887063
+                    ],
+                    [
+                        1.3800074517866452
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.5547097093438046
+                ],
+                "mu_imp": [
+                    0.626822372135168,
+                    0.5373675548652045
+                ],
+                "pf": [
+                    0.1117723815467088
+                ],
+                "std_imp": [
+                    0.8967730149450356,
+                    0.6229186223354394
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.9228587540919571
+                ],
+                "gp_std": [
+                    0.00039686884465266827
+                ],
+                "inputs": [
+                    [
+                        0.5136432643887063,
+                        1.3800074517866452
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.9228587540919571
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 20.0,
+            "time_step": 20
+        },
+        {
+            "adaptive_MC": {
+                "inputs": [
+                    [
+                        0.7646639360897934
+                    ],
+                    [
+                        1.0035616248130308
+                    ]
+                ],
+                "output_required": [
+                    1.0
+                ]
+            },
+            "ais_stats": {
+                "cov_pf": [
+                    0.42595811734374833
+                ],
+                "mu_imp": [
+                    0.626822372135168,
+                    0.5373675548652045
+                ],
+                "pf": [
+                    0.16158733989864393
+                ],
+                "std_imp": [
+                    0.8967730149450356,
+                    0.6229186223354394
+                ]
+            },
+            "conditional": {
+                "flag_sample": [
+                    false
+                ],
+                "gp_mean": [
+                    0.8616354445584469
+                ],
+                "gp_std": [
+                    0.0019574036729490094
+                ],
+                "inputs": [
+                    [
+                        0.7646639360897934,
+                        1.0035616248130308
+                    ]
+                ],
+                "need_sample": [
+                    false
+                ],
+                "reporter_transfer:average:value": [
+                    0.8616354445584469
+                ],
+                "reporter_transfer:converged": [
+                    true
+                ]
+            },
+            "time": 21.0,
+            "time_step": 21
+        }
+    ]
+}

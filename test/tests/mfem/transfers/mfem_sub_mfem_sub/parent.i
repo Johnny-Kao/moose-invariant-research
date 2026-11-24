@@ -1,0 +1,45 @@
+[Mesh]
+  type = MFEMFileMesh
+  file = ../../mesh/square.msh
+[]
+
+[Problem]
+  type = MFEMProblem
+  solve = false
+[]
+
+[MultiApps]
+  [recv_app]
+    type = FullSolveMultiApp
+    input_files = sub_recv.i
+    execute_on = FINAL
+  []
+  [send_app]
+    type = FullSolveMultiApp
+    input_files = sub_send.i
+    execute_on = INITIAL
+  []
+[]
+
+[Executioner]
+  type = MFEMSteady
+  device = cpu
+[]
+
+[Transfers]
+  active = 'copy_between_sub'
+  [copy_between_sub]
+    type = MultiAppMFEMCopyTransfer
+    source_variables = transfer_var
+    variables = transfer_var
+    from_multi_app = send_app
+    to_multi_app = recv_app
+  []
+  [general_transfer_between_sub]
+    type = MultiAppMFEMShapeEvaluationTransfer
+    source_variables = transfer_var
+    variables = transfer_var
+    from_multi_app = send_app
+    to_multi_app = recv_app
+  []
+[]

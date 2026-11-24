@@ -1,0 +1,68 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "KokkosADNodalBC.h"
+
+namespace Moose::Kokkos
+{
+
+InputParameters
+ADNodalBC::validParams()
+{
+  InputParameters params = NodalBCBase::validParams();
+  return params;
+}
+
+ADNodalBC::ADNodalBC(const InputParameters & parameters)
+  : NodalBCBase(parameters, Moose::VarFieldType::VAR_FIELD_STANDARD), _u(_kokkos_var, true)
+{
+  addMooseVariableDependency(_vars);
+}
+
+void
+ADNodalBC::computeResidual()
+{
+  _computing_residual = true;
+  _computing_jacobian = false;
+
+  dispatch();
+}
+
+void
+ADNodalBC::computeJacobian()
+{
+  _computing_residual = false;
+  _computing_jacobian = true;
+
+  dispatch();
+}
+
+void
+ADNodalBC::computeResidualAndJacobian()
+{
+  _computing_residual = true;
+  _computing_jacobian = true;
+
+  dispatch();
+}
+
+void
+ADNodalBC::dispatch()
+{
+  _thread.resize(_vars.size(), numKokkosBoundaryNodes());
+
+  Policy policy(0, _thread.size());
+
+  if (!_residual_dispatcher)
+    _residual_dispatcher = DispatcherRegistry::build<ResidualLoop>(this, type());
+
+  _residual_dispatcher->parallelFor(policy);
+}
+
+} // namespace Moose::Kokkos

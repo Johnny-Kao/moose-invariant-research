@@ -1,0 +1,3 @@
+app_name = navier_stokes
+allow_warnings = false
+allow_unused = false

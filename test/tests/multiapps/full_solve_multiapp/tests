@@ -1,0 +1,148 @@
+[Tests]
+  issues = '#1940'
+  design = 'FullSolveMultiApp.md'
+
+  [steady]
+    requirement = "The system shall be capable of executing a sub-application from a Steady executioner on "
+    [exec_initial]
+      type = 'Exodiff'
+      input = 'parent.i'
+      exodiff = 'parent_out.e parent_out_full_solve0.e'
+      recover = false
+
+      detail = "initial and "
+    []
+    [exec_final]
+      type = 'Exodiff'
+      input = 'parent.i'
+      cli_args = 'MultiApps/full_solve/execute_on=final Outputs/file_base=exec_final'
+      exodiff = 'exec_final.e exec_final_full_solve0.e'
+      recover = false
+
+      detail = "final."
+    []
+  []
+
+  [transient]
+    requirement = "The system shall be capable of executing a full-solve sub-application from a "
+                  "Transient parent executioner, completing a full solve at every parent timestep, "
+                  "with a sub-application that is "
+    [sub_steady]
+      type = CSVDiff
+      input = parent_transient.i
+      cli_args = 'MultiApps/sub/input_files=sub_steady.i'
+      csvdiff = parent_transient_out.csv
+
+      detail = "steady, and "
+    []
+    [sub_transient]
+      type = CSVDiff
+      input = parent_transient.i
+      csvdiff = parent_transient_out.csv
+      prereq = transient/sub_steady
+
+      detail = "transient."
+    []
+  []
+
+  [nested]
+    requirement = "The system shall be capable of executing nested multi-application structures "
+                  "from a Transient parent executioner, where a sub-application performs a "
+                  "complete simulation at every parent timestep and itself contains sub-applications, "
+                  "with the inner sub-application using a "
+    [fullsolve_fullsolve]
+      type = CSVDiff
+      input = parent_transient.i
+      cli_args = 'MultiApps/sub/input_files=sub_nested_fullsolve.i
+                  Outputs/file_base=nested_fs_fs_out'
+      csvdiff = nested_fs_fs_out.csv
+
+      detail = "complete-simulation executioner contained within an outer complete-simulation "
+               "sub-application, "
+    []
+    [fullsolve_transient]
+      type = CSVDiff
+      input = parent_transient.i
+      cli_args = 'MultiApps/sub/input_files=sub_nested_transient.i
+                  Outputs/file_base=nested_fs_tr_out'
+      csvdiff = nested_fs_tr_out.csv
+
+      detail = "Transient executioner that advances in step with the parent contained within an "
+               "outer complete-simulation sub-application, and a "
+    []
+    [transient_fullsolve]
+      type = CSVDiff
+      input = parent_nested_transient.i
+      csvdiff = parent_nested_transient_out.csv
+
+      detail = "complete-simulation executioner contained within an outer sub-application that "
+               "advances in step with the parent."
+    []
+  []
+
+  [nl_eigen]
+    requirement = "The system shall be capable of executing a sub-application from a Eigenvalue executioner on "
+    [exec_initial]
+      type = 'Exodiff'
+      input = 'parent_eigen.i'
+      exodiff = 'parent_eigen_out.e parent_eigen_out_full_solve0.e'
+      recover = false
+
+      detail = "initial and "
+    []
+    [exec_final]
+      type = 'Exodiff'
+      input = 'parent_eigen.i'
+      cli_args = 'MultiApps/full_solve/execute_on=final Outputs/file_base=exec_final_eigen'
+      exodiff = 'exec_final_eigen.e exec_final_eigen_full_solve0.e'
+      recover = false
+
+      detail = "final."
+    []
+  []
+
+  [solve_not_converge]
+    requirement = "When sub-application solve does not converge, the system shall be able to either "
+    [abort]
+      type = RunException
+      input = parent.i
+      cli_args = 'full_solve0:Executioner/nl_rel_tol=0
+                  full_solve0:Executioner/dtmin=0.01
+                  full_solve0:Executioner/nl_max_its=3'
+      expect_err = 'Solve failed and timestep already at or below dtmin, cannot continue!'
+
+      detail = "abort run, "
+    []
+    [error]
+      type = RunException
+      input = parent.i
+      cli_args = 'MultiApps/full_solve/ignore_solve_not_converge=true'
+      expect_err = 'Requesting to ignore failed solutions, but \'Executioner\/error\_on\_dtmin\' '
+                   'is true in sub-application. Set this parameter to false in '
+                   'sub-application to avoid an error if Transient solve fails.'
+
+      detail = "throw error if error_on_dtmin is not set, or "
+    []
+    [continue]
+      type = Exodiff
+      input = parent.i
+      cli_args = 'MultiApps/full_solve/ignore_solve_not_converge=true
+                  full_solve0:Executioner/nl_rel_tol=0
+                  full_solve0:Executioner/dtmin=0.01
+                  full_solve0:Executioner/nl_max_its=3
+                  full_solve0:Executioner/error_on_dtmin=false
+                  Outputs/file_base=parent_diverge_out'
+      exodiff = 'parent_diverge_out.e parent_diverge_out_full_solve0.e'
+
+      detail = "continue run."
+    []
+    [infinite_recursion]
+      type = RunException
+      input = recursive_parent.i
+      expect_err = "Maximum multiapp level has been reached. This is likely caused by an infinite loop "
+               "in your multiapp system. If additional multiapp levels are needed, "
+               "max_multiapp_level can be specified in the MuliApps block."
+      detail = "throw an error if the user-selected maximum level of nesting of applications is reached"
+    []
+  []
+[]

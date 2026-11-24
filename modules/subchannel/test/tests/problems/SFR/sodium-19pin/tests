@@ -1,0 +1,103 @@
+[Tests]
+  design = 'TriSubChannel1PhaseProblem.md'
+  issues = '#29194 #29490 #29505'
+  [test_explicit]
+    type = CSVDiff
+    input = test19_explicit.i
+    csvdiff = test19_explicit_out.csv
+    valgrind = NONE
+    recover = false
+    allow_warnings = true
+    requirement = 'The system shall examine the subchannel explicit solver for a 19-pin liquid sodium cooled assembly'
+  []
+  [test_implicit]
+    type = CSVDiff
+    input = test19_implicit.i
+    csvdiff = test19_implicit_out.csv
+    valgrind = NONE
+    recover = false
+    # Tolerance added due to CIVET machine difference
+    # See PR: Qprime #31380
+    # and PR: various mods #31283
+    rel_err = 3e-03
+    allow_warnings = true
+    requirement = 'The system shall examine the subchannel implicit solver for a 19-pin liquid sodium cooled assembly'
+  []
+  [test_radial_conduction]
+    type = CSVDiff
+    input = test19_radial_conduction.i
+    csvdiff = test19_radial_conduction_out.csv
+    valgrind = NONE
+    recover = false
+    issues = '#33956'
+    requirement = 'The system shall spread heat from a heated center pin to the outer subchannels of a 19-pin liquid sodium cooled assembly through radial heat conduction when turbulent mixing is disabled.'
+  []
+  [invalid_segregated_relaxation]
+    type = RunException
+    input = test19_implicit.i
+    cli_args = 'SubChannel/mass_flow_relaxation=0.5 Outputs/exodus=false Outputs/csv=false'
+    expect_err = "The 'mass_flow_relaxation' parameter is only used by the implicit non-segregated solve\."
+    requirement = 'The system shall reject monolithic relaxation controls when using a segregated solve.'
+  []
+  [invalid_explicit_nonsegregated]
+    type = RunException
+    input = test19_explicit.i
+    cli_args = 'SubChannel/segregated=false Outputs/exodus=false Outputs/csv=false'
+    expect_err = "A non-segregated solve requires 'implicit = true'\."
+    requirement = 'The system shall reject a non-segregated solve when implicit assembly is disabled.'
+  []
+  [test_implicit_tiny_dt]
+    type = RunApp
+    input = test19_monolithic.i
+    cli_args = 'Executioner/type=Transient Executioner/dt=1e-5 Executioner/end_time=1e-5 Executioner/abort_on_solve_fail=true SubChannel/interpolation_scheme=upwind SubChannel/enthalpy_subcycles=2 SubChannel/rtol=1e-10 SubChannel/atol=1e-12 SubChannel/mass_flow_relaxation=0.3 SubChannel/pressure_relaxation=0.8 Outputs/exodus=false Outputs/csv=false'
+    capabilities = 'method!=dbg'
+    valgrind = NONE
+    recover = false
+    max_threads = 1
+    max_parallel = 1
+    requirement = 'The system shall converge, with the coupled subchannel solver, a transient sodium case with a 10 microsecond time step, upwind spatial interpolation, and enthalpy subcycling.'
+  []
+  [test_saturated_sodium_tiny_dt]
+    type = RunApp
+    input = test19_monolithic.i
+    cli_args = 'FluidProperties/sodium/type=SodiumSaturationFluidProperties Executioner/type=Transient Executioner/dt=1e-5 Executioner/end_time=1e-5 Executioner/abort_on_solve_fail=true SubChannel/P_tol=1e-5 SubChannel/interpolation_scheme=upwind SubChannel/enthalpy_subcycles=2 SubChannel/rtol=1e-10 SubChannel/atol=1e-12 SubChannel/mass_flow_relaxation=0.3 SubChannel/pressure_relaxation=0.8 Outputs/exodus=false Outputs/csv=false'
+    capabilities = 'method!=dbg'
+    valgrind = NONE
+    recover = false
+    allow_warnings = true
+    max_threads = 1
+    max_parallel = 1
+    requirement = 'The system shall converge, with the coupled subchannel solver, a transient saturated sodium case with a 10 microsecond time step, upwind spatial interpolation, and enthalpy subcycling.'
+  []
+  [test_monolithic]
+    type = CSVDiff
+    input = test19_monolithic.i
+    csvdiff = test19_monolithic_out.csv
+    abs_zero = 1e-7
+    rel_err = 7e-06
+    valgrind = NONE
+    recover = false
+    requirement = 'The system shall examine the relaxed subchannel monolithic solver for a 19-pin liquid sodium cooled assembly'
+  []
+  [test_monolithic_pacio]
+    type = CSVDiff
+    input = test19_monolithic_pacio.i
+    csvdiff = test19_monolithic_pacio_out.csv
+    abs_zero = 1e-7
+    rel_err = 7e-06
+    valgrind = NONE
+    recover = false
+    design = 'SCMFrictionChenTodreas.md SCMMixingChenTodreas.md'
+    issues = '#33608'
+    requirement = 'The system shall examine the relaxed subchannel monolithic solver for a 19-pin liquid sodium cooled assembly with the Pacio-Chen-Todreas friction and mixing parameterizations'
+  []
+  [planar_mean_height_below_inlet]
+    type = RunException
+    input = test19_implicit.i
+    cli_args = 'Postprocessors/Mean_Temp/height=-0.1'
+    expect_err = "height: -0.1 is below the inlet of the mesh at 0."
+    design = 'SCMPlanarMean.md'
+    issues = '#34499'
+    requirement = 'The system shall report an error if the height of a planar mean is below the inlet'
+  []
+[]

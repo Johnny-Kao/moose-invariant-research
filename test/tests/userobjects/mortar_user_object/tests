@@ -1,0 +1,42 @@
+[Tests]
+  design = 'UserObjects/index.md'
+  issues = '#21329'
+  [test]
+    requirement = 'The system shall be able to execute a user object on a mortar interface and obtain gap computations that are equivalent to an auxiliary kernel evaluation'
+    [reference]
+      input = test.i
+      exodiff = test_out.e
+      type = Exodiff
+      detail = 'on a reference, undisplaced mesh, and'
+    []
+    [displaced]
+      input = displaced_test.i
+      csvdiff = displaced_test_out.csv
+      type = CSVDiff
+      detail = 'on a displaced mesh.'
+    []
+  []
+  [parallel_execute_exception]
+    type = RunException
+    input = test.i
+    issues = '#33908'
+    cli_args = 'UserObjects/weighted_gap_uo/throw_on_rank=1 Outputs/exodus=false'
+    expect_err = 'A std::exception was raised during FEProblemBase::computeUserObjectsInternal.*TestWeightedGapUserObject intentional execute exception'
+    min_parallel = 2
+    max_parallel = 2
+    valgrind = 'none'
+    requirement = 'The system shall terminate when one rank throws an exception during mortar user object execution.'
+  []
+  [parallel_execute_exception_during_solve]
+    type = RunException
+    input = test.i
+    issues = '#33908'
+    cli_args = 'Problem/solve=true Variables/u/family=LAGRANGE Kernels/diff/type=Diffusion Kernels/diff/variable=u UserObjects/weighted_gap_uo/throw_on_rank=1 Outputs/exodus=false'
+    expect_err = 'Aborting as solve did not converge.*^A std::exception was raised during FEProblemBase::computeUserObjectsInternal\nTestWeightedGapUserObject intentional execute exception'
+    absent_out = 'raised during FEProblemBase::compute(ResidualTags|JacobianTags|ResidualAndJacobian)'
+    min_parallel = 2
+    max_parallel = 2
+    valgrind = 'none'
+    requirement = 'The system shall fail the solve when one rank throws an exception during mortar user object residual execution.'
+  []
+[]

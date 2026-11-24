@@ -1,0 +1,265 @@
+[Tests]
+  issues = '#9151 #24128'
+  design = 'ReferenceResidualConvergence.md'
+  [base]
+    type = Exodiff
+    input = 'reference_residual.i'
+    exodiff = 'reference_residual_out.e'
+    requirement = 'The system shall have the ability to base convergence on the comparison of '
+                  'individual variables to reference quantities of those variables, using a convergence object.'
+  []
+  [scaled_bad]
+    type = RunException
+    input = 'reference_residual.i'
+    expect_err = 'Solve Did NOT Converge'
+    cli_args = 'coef=1e17 Outputs/exodus=false -pc_type svd -pc_svd_monitor -ksp_max_it 10'
+    requirement = 'The system shall fail to find a converged solution when basing convergence on '
+                  'individual variable reference quantities with poor scaling, using a convergence object.'
+  []
+  [scaled_good]
+    type = Exodiff
+    input = 'reference_residual.i'
+    cli_args = 'coef=1e17 Outputs/file_base=scaled Executioner/automatic_scaling=true '
+               'Executioner/verbose=true -pc_type svd -pc_svd_monitor -ksp_max_it 10'
+    exodiff = 'scaled.e'
+    requirement = 'The system shall have the ability to automatically scale a originally poorly '
+                  'scaled problem and achieve convergence based on individual reference quantities, using a convergence object.'
+    max_parallel = 2
+  []
+  [converge_on]
+    type = RunApp
+    input = 'reference_residual.i'
+    expect_out = 'Solve Converged!'
+    cli_args = 'Convergence/conv/converge_on="u"'
+    requirement = 'The system shall have the ability to base system convergence on the convergence '
+                  'of a subset of variables, using a convergence object.'
+  []
+  [custom_residual]
+    type = Exodiff
+    input = 'custom_residual.i'
+    exodiff = 'custom_residual_out.e'
+    requirement = 'The system shall have the ability to base system convergence on the convergence '
+                  'of a custom vector tag, using a convergence object.'
+  []
+  [converge_on_group_error]
+    type = RunException
+    input = 'reference_residual.i'
+    expect_err = 'You added variable \'u\' to a group but excluded it from the convergence check. '
+                 'This is not permitted.'
+    cli_args = 'Convergence/conv/converge_on="v" Convergence/conv/group_variables="u v"'
+    requirement = 'The system shall require all grouped variables to be included in the convergence '
+                  'check, using a convergence object.'
+  []
+  [group_unknown_variable]
+    type = RunException
+    input = 'reference_residual.i'
+    expect_err = "Variable 'w' is not a variable of the nonlinear system"
+    cli_args = 'Convergence/conv/group_variables="u v w x"'
+    requirement = 'The system shall report an error when a grouped variable is not a variable of the '
+                  'nonlinear system, using a convergence object.'
+    issues = '#34444'
+  []
+  [wildcard]
+    type = RunApp
+    input = 'reference_residual.i'
+    expect_out = 'Solve Converged!'
+    cli_args = 'Convergence/conv/converge_on="?"'
+    requirement = 'The system shall support wildcards for choosing the variables to base convergence '
+                  'on, using a convergence object.'
+  []
+  [abs_ref]
+    type = CSVDiff
+    input = 'abs_ref.i'
+    csvdiff = 'abs_ref_out.csv'
+    requirement = 'The system shall have the ability to base convergence on the comparison of L2 normalization of the residual for '
+                  'individual variables to the sum of the L2 normalization of the absolute value of the residual contributions '
+                  'of those variables, using a convergence object.'
+  []
+  [abs_ref_acceptable]
+    type = RunApp
+    input = 'abs_ref_acceptable.i'
+    expect_out = 'Converged due to ACCEPTABLE tolerances'
+    requirement = 'The system shall have the ability to base convergence on the comparison of L2 normalization of the residual for '
+                  'individual variables to the sum of the L2 normalization of the absolute value of the residual contributions '
+                  'of those variables using an acceptable tolerance past a given number of nonlinear iterations, using a convergence object.'
+  []
+  [local_normalization]
+    type = CSVDiff
+    input = 'abs_ref.i'
+    csvdiff = 'abs_ref_local_out.csv'
+    cli_args = 'Convergence/conv/normalization_type=local_L2 Outputs/file_base=abs_ref_local_out'
+    requirement = 'The system shall have the ability to base convergence on the comparison of L2 normalization of the residual for '
+                  'individual variables locally divided by the absolute value of the residual contributions '
+                  'of those variables, using a convergence object.'
+  []
+  [local_linf_normalization]
+    type = CSVDiff
+    input = 'abs_ref.i'
+    csvdiff = 'abs_ref_local_Linf_out.csv'
+    cli_args = 'Convergence/conv/normalization_type=local_Linf Outputs/file_base=abs_ref_local_Linf_out'
+    requirement = 'The system shall have the ability to base convergence on the comparison of Linf normalization of the residual for '
+                  'individual variables locally divided by the absolute value of the residual contributions '
+                  'of those variables, using a convergence object.'
+  []
+  [linf_normalization]
+    type = CSVDiff
+    input = 'abs_ref.i'
+    csvdiff = 'abs_ref_Linf_out.csv'
+    cli_args = 'Convergence/conv/normalization_type=global_Linf Outputs/file_base=abs_ref_Linf_out'
+    requirement = 'The system shall have the ability to base convergence on the comparison of Linf normalization of the residual for '
+                  'individual variables to the sum of the Linf normalization of the absolute value of the residual contributions '
+                  'of those variables, using a convergence object.'
+  []
+  [ad_abs_ref]
+    type = CSVDiff
+    input = 'ad_abs_ref.i'
+    csvdiff = 'ad_abs_ref_out.csv'
+    requirement = 'The system shall have the ability to base convergence on the comparison of L2 normalization of the residual for '
+                  'individual variables to the sum of the L2 normalization of the absolute value of the residual contributions '
+                  'of those variables using AD, using a convergence object.'
+  []
+  [no_ref]
+    type = CSVDiff
+    input = 'no_ref.i'
+    csvdiff = 'no_ref_out.csv'
+    cli_args = 'Problem/extra_tag_vectors=absref'
+    requirement = 'The system shall have the ability to default to the traditional convergence checks if no '
+                  'reference vector is provided in ReferenceResidualConvergence.'
+  []
+  [zero_tolerance_ref]
+    type = RunException
+    input = no_ref.i
+    expect_err = 'Solve failed'
+    cli_args = 'Problem/extra_tag_vectors=absref Convergence/conv/reference_vector=absref Convergence/conv/zero_reference_residual_treatment=zero_tolerance'
+    requirement = 'The system shall treat convergence with a zero reference residual value as requiring zero residual value for convergence, using a convergence object.'
+  []
+  [zero_rel_tolerance_ref]
+    type = CSVDiff
+    input = no_ref.i
+    csvdiff = 'zero_rel_tolerance_ref_out.csv'
+    cli_args = 'Problem/extra_tag_vectors=absref Convergence/conv/reference_vector=absref Convergence/conv/zero_reference_residual_treatment=relative_tolerance Convergence/conv/nl_rel_tol=1e-8 Outputs/file_base=zero_rel_tolerance_ref_out'
+    requirement = 'The system shall treat convergence with a zero reference residual value as converged if the residual is below the relative tolerance, using a convergence object.'
+  []
+
+  [formatting]
+    type = Exodiff
+    input = 'formatting.i'
+    exodiff = 'formatting_out.e'
+    expect_out = 'conv_one: global_L2 Reference Residual check.*(a, b, variable_f).*(c, d).*g.*conv_one: Converged normally.*conv_two: local_L2 Reference Residual check.*verylongvariable_e.*res.*local res/ref.*g.*res.*local res/ref.*conv_two: Converged normally'
+    requirement = 'The system shall be able to use a reference residual to converge to with two separate convergence options, and print to screen the relevant parameters for each convergence object.'
+  []
+  [split]
+    type = Exodiff
+    input = 'split.i'
+    exodiff = 'split_out.e'
+    expect_out = 'conv_one: global_L2 Reference Residual check.*(a, b, variable_f).*(c, d).*g.*conv_one: Converged normally.*conv_two: local_L2 Reference Residual check.*verylongvariable_e.*res.*local res/ref.*g.*res.*local res/ref.*conv_two: Converged normally'
+    requirement = 'The system shall be able to use the reference residual technique to converge two different nonlinear systems with separate reference residuals for each system.'
+  []
+  [split_multi_system_fixed_point_forward]
+    type = Exodiff
+    input = 'split.i'
+    exodiff = 'split_multi_system_fixed_point_forward.e'
+    cli_args = "Executioner/multi_system_fixed_point=true Executioner/multi_system_fixed_point_convergence=combined "
+               "Executioner/system_names='first second' Outputs/file_base=split_multi_system_fixed_point_forward"
+    expect_out = 'conv_one: global_L2 Reference Residual check.*(a, b, variable_f).*(c, d).*g.*conv_one: Converged normally.*conv_two: local_L2 Reference Residual check.*verylongvariable_e.*res.*local res/ref.*g.*res.*local res/ref.*conv_two: Converged normally'
+    requirement = 'The system shall be able to use reference residual convergence objects from a parsed multi-system fixed-point convergence object with solver systems in problem order.'
+  []
+  [split_multi_system_fixed_point_reverse]
+    type = Exodiff
+    input = 'split.i'
+    exodiff = 'split_multi_system_fixed_point_reverse.e'
+    cli_args = "Executioner/multi_system_fixed_point=true Executioner/multi_system_fixed_point_convergence=combined "
+               "Executioner/system_names='second first' Outputs/file_base=split_multi_system_fixed_point_reverse"
+    expect_out = 'conv_one: global_L2 Reference Residual check.*(a, b, variable_f).*(c, d).*g.*conv_one: Converged normally.*conv_two: local_L2 Reference Residual check.*verylongvariable_e.*res.*local res/ref.*g.*res.*local res/ref.*conv_two: Converged normally'
+    requirement = 'The system shall be able to use reference residual convergence objects from a parsed multi-system fixed-point convergence object with solver systems in reverse order.'
+  []
+  [unscale]
+    type = RunApp
+    input = 'formatting.i'
+    cli_args = 'scaling=true --color off'
+    expect_out = '\(a,\s*b,\s*variable_f\)->\s*res:\s*5\.00e\+06\s+ref:\s*6\.12e\+06\s+res/ref:\s*8\.16e-01'
+    requirement = 'The system shall be able to use a reference residual to converge to and reverse variable scaling to output the actual residual, while allowing variable scaling.'
+  []
+
+  [variable_abs_tol]
+    requirement = 'The system shall be able to check the convergence of individual equation residuals against '
+                  'reference quantities with an absolute tolerance specific to each equation'
+    issues = '#34304'
+    [converge]
+      type = CSVDiff
+      input = 'variable_abs_tol.i'
+      csvdiff = 'variable_abs_tol_out.csv'
+      detail = 'so that a variable with a large round-off floor converges while the other '
+               'variables keep a tighter tolerance,'
+    []
+    [single_tol_fails]
+      type = RunException
+      input = 'variable_abs_tol.i'
+      cli_args = "Convergence/conv/variable_nl_abs_tol='' Outputs/csv=false"
+      expect_err = 'Solve Did NOT Converge'
+      detail = 'where the same problem does not converge with one absolute tolerance for all '
+               'variables,'
+    []
+    [acceptable]
+      type = RunApp
+      input = 'variable_abs_tol.i'
+      cli_args = "Convergence/conv/variable_nl_abs_tol='u 1e-8' Convergence/conv/acceptable_iterations=3 "
+                 "Convergence/conv/acceptable_multiplier=1e4 Outputs/csv=false"
+      expect_out = 'Converged due to ACCEPTABLE tolerances'
+      detail = 'and apply the acceptable multiplier to the per-variable tolerances.'
+    []
+  []
+
+  [error]
+    requirement = 'When using ReferenceResidualConvergence the system shall throw an error '
+    [wrong_vector_tag_type]
+      type = RunException
+      input = abs_ref.i
+      cli_args = "Problem/extra_tag_solutions='absref' Problem/extra_tag_vectors=''"
+      expect_err = "is not a residual vector tag"
+      detail = "if the reference tag is not a residual vector tag."
+    []
+    [no_tag]
+      type = RunException
+      input = abs_ref.i
+      cli_args = "Problem/extra_tag_vectors=''"
+      expect_err = "does not exist"
+      detail = "if the reference tag does not exist."
+    []
+    [no_reference_vector]
+      type = RunException
+      input = no_ref.i
+      cli_args = "Convergence/conv/normalization_type=local_L2 Problem/extra_tag_vectors=absref"
+      expect_err = "If local norm is used, a reference_vector must be provided"
+      detail = "if the reference vector is not provided when using local normalization."
+    []
+    [not_residual_tag]
+      type = RunException
+      input = no_ref.i
+      cli_args = "Problem/extra_tag_solutions=absref GlobalParams/absolute_value_vector_tags=absref"
+      expect_err = "is not a residual vector tag"
+      detail = "if the reference vector is provided is not a residual vector tag,"
+    []
+    [variable_abs_tol_unknown_variable]
+      type = RunException
+      input = variable_abs_tol.i
+      cli_args = "Convergence/conv/variable_nl_abs_tol='w 1'"
+      expect_err = "Variable 'w' is not a variable of nonlinear system"
+      detail = "if a per-variable absolute tolerance names a variable that is not in the nonlinear system,"
+    []
+    [variable_abs_tol_negative]
+      type = RunException
+      input = variable_abs_tol.i
+      cli_args = "Convergence/conv/variable_nl_abs_tol='u -1'"
+      expect_err = "The absolute tolerance of variable 'u' must be non-negative"
+      detail = "if a per-variable absolute tolerance is negative,"
+    []
+    [variable_abs_tol_group_mismatch]
+      type = RunException
+      input = variable_abs_tol.i
+      cli_args = "Convergence/conv/variable_nl_abs_tol='u 1e-4' Convergence/conv/group_variables='u v'"
+      expect_err = "The variables in group \(u, v\) must all have the same absolute tolerance"
+      detail = "if the variables in a group do not all have the same per-variable absolute tolerance."
+    []
+  []
+[]

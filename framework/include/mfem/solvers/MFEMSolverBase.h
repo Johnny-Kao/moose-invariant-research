@@ -1,0 +1,64 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#ifdef MOOSE_MFEM_ENABLED
+
+#pragma once
+
+#include "MFEMObject.h"
+
+namespace Moose::MFEM
+{
+/**
+ * Base class for wrapping mfem::Solver-derived classes.
+ */
+class SolverBase : public MFEMObject
+{
+public:
+  static InputParameters validParams();
+
+  SolverBase(const InputParameters & parameters);
+
+  /// Returns the wrapped MFEM solver
+  mfem::Solver & GetSolver();
+
+  /// Set the wrapped MFEM solver
+  void SetSolver(mfem::Solver * solver) { _solver.reset(solver); }
+
+  /// Override in derived classes to construct and set the solver options.
+  virtual void ConstructSolver() = 0;
+
+  /// Updates the solver and any associated weak form context at the operator level
+  virtual void SetOperator(const mfem::Operator & op);
+
+  /// Solve the operator for the provided right-hand side and solution vector.
+  void Mult(const mfem::Vector & rhs, mfem::Vector & x) { GetSolver().Mult(rhs, x); }
+
+protected:
+  /// Update the solver following any changes to the weak form it is responsible for solving.
+  /// Default no-op.
+  virtual void UpdateEquationSystemContext() {}
+
+  /// Updates the solver at the operator level. Default implementation sets the operator on the
+  /// wrapped MFEM solver
+  virtual void SetOperatorImpl(const mfem::Operator & op) { GetSolver().SetOperator(op); }
+
+  /// Solver to be used for the problem
+  std::unique_ptr<mfem::Solver> _solver;
+};
+
+inline mfem::Solver &
+SolverBase::GetSolver()
+{
+  mooseAssert(_solver, "Attempting to retrieve solver before it's been constructed");
+  return *_solver;
+}
+} // namespace Moose::MFEM
+
+#endif

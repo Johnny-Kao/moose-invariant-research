@@ -1,0 +1,33 @@
+[Tests]
+  design = 'MFEMVariableLineValueSampler.md'
+  issues = '#31249'
+  [MFEMLineVariableValueSamplerTooFewPoints]
+    type = RunException
+    input = ../../kernels/diffusion.i
+    cli_args = 'VectorPostprocessors/line_sample/num_points=1'
+    expect_err = 'Range check failed for parameter VectorPostprocessors/line_sample/num_points; expression = \'num_points >= 2\', value = 1'
+    requirement = 'The system shall identify the input block when a line variable sampler is '
+                  'configured with fewer than two points.'
+    capabilities = 'mfem'
+    recover = false
+    compute_devices = 'cpu cuda'
+  []
+  [MFEMVariableLineValueSamplerMultiVariable]
+    type = CSVDiff
+    input = line_value_sampler_multi_variable.i
+    csvdiff = 'OutputData/line_value_sampler_multi_variable_line_sampler_0001.csv'
+    requirement = 'The system shall be able to sample multiple variables along a line using MFEM.'
+    capabilities = 'mfem'
+    recover = false
+    compute_devices = 'cpu cuda'
+  []
+  [MFEMComplexVariableLineValueSamplerMultiVariable]
+    type = CSVDiff
+    input = complex_line_value_sampler_multi_variable.i
+    csvdiff = 'OutputData/complex_line_value_sampler_multi_variable_line_sampler_0001.csv'
+    requirement = 'The system shall be able to sample multiple complex variables along a line using MFEM.'
+    capabilities = 'mfem'
+    recover = false
+    compute_devices = 'cpu cuda'
+  []
+[]

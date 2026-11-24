@@ -1,0 +1,15 @@
+[Tests]
+  design = 'FCTFdisplacementIC.md'
+  issues = '#29501'
+  [test]
+    type = CSVDiff
+    csvdiff = test_out.csv
+    capabilities = 'method!=dbg'
+    valgrind = NONE
+    recover = false
+    abs_zero = 1e-6
+    max_threads = 1
+    input = 'test.i'
+    requirement = 'The system shall calculate the geometric parameters for FCTF'
+  []
+[]

@@ -1,0 +1,19 @@
+[Tests]
+  design = 'QuadSubChannel1PhaseProblem.md'
+  issues = '#29238'
+  [PNNL-12_tr]
+      type = CSVDiff
+      input = 2X6_transient.i
+      csvdiff = 2X6_transient_out.csv
+      # custom_cmp = 'test.exodiff'
+      capabilities = 'method!=dbg'
+      valgrind = NONE
+      recover = false
+      abs_zero = 1e-5
+      # Tightening the crossflow linear tolerances from 1e-6 to 1e-7 changes mdot by up to 1e-4,
+      # so differences of that size between compilers are within the solver tolerance
+      rel_err = 2e-4
+      max_threads = 1
+      requirement = 'The system shall examine the subchannel solver for the PNNL 12-pin transient case'
+  []
+[]

@@ -1,0 +1,105 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#ifdef MOOSE_MFEM_ENABLED
+
+#include "TimeDependentEquationSystemProblemOperator.h"
+#include "MFEMProblem.h"
+
+namespace Moose::MFEM
+{
+TimeDependentEquationSystemProblemOperator::TimeDependentEquationSystemProblemOperator(
+    MFEMProblem & problem, const std::string & weak_form_name)
+  : TimeDependentProblemOperator(problem),
+    _equation_system(std::dynamic_pointer_cast<TimeDependentEquationSystem>(
+        problem.getEquationSystem(weak_form_name)))
+{
+  if (!_equation_system)
+    mooseError("The weak form supplying this operator does not provide a "
+               "TimeDependentEquationSystem, which is required by "
+               "TimeDependentEquationSystemProblemOperator.");
+}
+
+void
+TimeDependentEquationSystemProblemOperator::SetGridFunctions()
+{
+  _trial_var_names = GetEquationSystem()->GetTrialVarNames();
+  _test_var_names = GetEquationSystem()->GetTestVarNames();
+  TimeDependentProblemOperator::SetGridFunctions();
+}
+
+void
+TimeDependentEquationSystemProblemOperator::Init()
+{
+  TimeDependentProblemOperator::Init();
+  // Set timestepper
+  auto & ode_solver = _problem_data.ode_solver;
+  ode_solver = std::make_unique<mfem::BackwardEulerSolver>();
+  ode_solver->Init(*(this));
+  SetTime(_problem.time());
+  SetImplicitVariableType(STATE);
+}
+
+void
+TimeDependentEquationSystemProblemOperator::Solve()
+{
+  auto & dt = _problem.dt();
+  auto & gfs = _problem_data.gridfunctions;
+  auto & tdm = _problem_data.time_derivative_map;
+
+  // Initialise time derivative
+  for (const auto & trial_var_name : _trial_var_names)
+    gfs.GetRef(tdm.getTimeDerivativeName(trial_var_name)) = gfs.GetRef(trial_var_name);
+
+  // Advance time step of the MFEM problem. Time is also updated here, and
+  // _problem_operator->SetTime is called inside the ode_solver->Step method to
+  // update the time used by time dependent (function) coefficients.
+  _problem_data.ode_solver->Step(*_trial_true_vector, _problem.time(), dt);
+  // Synchonise time dependent GridFunctions with updated DoF data.
+  SetTrialVariablesFromTrueVectors();
+
+  // Set time derivatives
+  for (const auto & trial_var_name : _trial_var_names)
+    (gfs.GetRef(tdm.getTimeDerivativeName(trial_var_name)) -= gfs.GetRef(trial_var_name)) /= -dt;
+}
+
+void
+TimeDependentEquationSystemProblemOperator::ImplicitSolve(const mfem::real_t dt,
+                                                          const mfem::Vector &,
+                                                          mfem::Vector & X_new)
+{
+  _problem_data.coefficients.setTime(GetTime());
+
+  {
+    TIME_SECTION(
+        "TimeDependentEquationSystemProblemOperator::FormSystem", 2, "Assembling MFEM System");
+    FormEquationSystemOperator(dt);
+  }
+
+  auto * const es = GetEquationSystem();
+
+  {
+    TIME_SECTION(
+        "TimeDependentEquationSystemProblemOperator::SolveSystem", 2, "Solving MFEM System");
+    SolveWithOperator(*es, _true_rhs, _true_x);
+  }
+
+  X_new.MakeRef(_true_x, 0);
+}
+
+void
+TimeDependentEquationSystemProblemOperator::FormEquationSystemOperator(mfem::real_t dt)
+{
+  GetEquationSystem()->SetTimeStep(dt);
+  GetEquationSystem()->FormSystem(_true_x, _true_rhs);
+}
+
+} // namespace Moose::MFEM
+
+#endif

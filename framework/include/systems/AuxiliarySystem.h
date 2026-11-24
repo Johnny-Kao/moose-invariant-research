@@ -1,0 +1,262 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#pragma once
+
+// MOOSE includes
+#include "SystemBase.h"
+#include "LinearFVGradientManager.h"
+#include "ExecuteMooseObjectWarehouse.h"
+#include "PerfGraphInterface.h"
+
+#include "libmesh/system.h"
+#include "libmesh/transient_system.h"
+
+// Forward declarations
+class AuxKernelBase;
+template <typename ComputeValueType>
+class AuxKernelTempl;
+typedef AuxKernelTempl<Real> AuxKernel;
+typedef AuxKernelTempl<RealVectorValue> VectorAuxKernel;
+typedef AuxKernelTempl<RealEigenVector> ArrayAuxKernel;
+class FEProblemBase;
+class TimeIntegrator;
+class AuxScalarKernel;
+
+// libMesh forward declarations
+namespace libMesh
+{
+template <typename T>
+class NumericVector;
+}
+
+/**
+ * A system that holds auxiliary variables
+ *
+ */
+class AuxiliarySystem : public SystemBase, public PerfGraphInterface, public LinearFVGradientManager
+{
+public:
+  AuxiliarySystem(FEProblemBase & subproblem, const std::string & name);
+  virtual ~AuxiliarySystem();
+
+  virtual void initSolutionState() override;
+  virtual void initialSetup() override;
+  virtual void reinit() override;
+  virtual void timestepSetup() override;
+  virtual void customSetup(const ExecFlagType & exec_type) override;
+  virtual void subdomainSetup() override;
+  virtual void residualSetup() override;
+  virtual void jacobianSetup() override;
+  virtual void updateActive(THREAD_ID tid);
+
+  virtual void addVariable(const std::string & var_type,
+                           const std::string & name,
+                           InputParameters & parameters) override;
+
+  /**
+   * Adds an auxiliary kernel
+   * @param kernel_name The type of the kernel
+   * @param name The name of the kernel
+   * @param parameters Parameters for this kernel
+   */
+  void addKernel(const std::string & kernel_name,
+                 const std::string & name,
+                 InputParameters & parameters);
+
+#ifdef MOOSE_KOKKOS_ENABLED
+  void addKokkosKernel(const std::string & kernel_name,
+                       const std::string & name,
+                       InputParameters & parameters);
+#endif
+
+  /**
+   * Adds a scalar kernel
+   * @param kernel_name The type of the kernel
+   * @param name The name of the kernel
+   * @param parameters Kernel parameters
+   */
+  void addScalarKernel(const std::string & kernel_name,
+                       const std::string & name,
+                       InputParameters & parameters);
+
+  virtual void reinitElem(const Elem * elem, THREAD_ID tid) override;
+  virtual void reinitElemFace(const Elem * elem, unsigned int side, THREAD_ID tid) override;
+
+  const NumericVector<Number> * const & currentSolution() const override
+  {
+    return _current_solution;
+  }
+
+  virtual void serializeSolution();
+
+  // This is an empty function since the Aux system doesn't have a matrix!
+  virtual void augmentSparsity(libMesh::SparsityPattern::Graph & /*sparsity*/,
+                               std::vector<dof_id_type> & /*n_nz*/,
+                               std::vector<dof_id_type> & /*n_oz*/) override;
+
+  /**
+   * Compute auxiliary variables
+   * @param type Time flag of which variables should be computed
+   */
+  virtual void compute(ExecFlagType type) override;
+
+#ifdef MOOSE_KOKKOS_ENABLED
+  void kokkosCompute(ExecFlagType type, int group);
+
+  /**
+   * Group the active Kokkos auxiliary kernels of each execution flag into stages that can each be
+   * computed in a single device pass
+   */
+  void buildKokkosAuxStages();
+#endif
+
+  /**
+   * Get a list of dependent UserObjects for this exec type
+   * @param type Execution flag type
+   * @return a set of dependent user objects
+   */
+  std::set<std::string> getDependObjects(ExecFlagType type);
+  std::set<std::string> getDependObjects();
+
+  /**
+   * Get the minimum quadrature order for evaluating elemental auxiliary variables
+   */
+  virtual libMesh::Order getMinQuadratureOrder() override;
+
+  /**
+   * Indicated whether this system needs material properties on boundaries.
+   * @return Boolean if IntegratedBCs are active
+   */
+  bool needMaterialOnSide(BoundaryID bnd_id);
+
+  virtual libMesh::System & sys() { return _sys; }
+
+  virtual libMesh::System & system() override { return _sys; }
+  virtual const libMesh::System & system() const override { return _sys; }
+
+  using LinearFVGradientManager::registerFVGradient;
+  using LinearFVGradientManager::updateFVGradient;
+
+  /// Copies the current solution into the previous nonlinear iteration solution
+  virtual void copyCurrentIntoPreviousNL();
+
+  void setScalarVariableCoupleableTags(ExecFlagType type);
+
+  void clearScalarVariableCoupleableTags();
+
+#ifdef MOOSE_KOKKOS_ENABLED
+  const ExecuteMooseObjectWarehouse<AuxKernelBase> & kokkosNodalAuxWarehouse() const;
+  const ExecuteMooseObjectWarehouse<AuxKernelBase> & kokkosElemAuxWarehouse() const;
+#endif
+
+  /// Computes and stores ||current - old|| / ||current|| for each variable in the given vector
+  /// @param var_diffs a vector being filled with the L2 norm of the solution difference
+  void variableWiseRelativeSolutionDifferenceNorm(std::vector<Number> & var_diffs) const;
+
+protected:
+  virtual void copyAdditionalStateBackwards(Moose::SolutionIterationType iteration_type,
+                                            bool skip_current_to_old) override;
+  virtual void restoreAdditionalStates() override;
+
+  void computeScalarVars(ExecFlagType type);
+  void computeNodalVars(ExecFlagType type, int group);
+  void computeMortarNodalVars(ExecFlagType type, int group);
+  void computeNodalVecVars(ExecFlagType type, int group);
+  void computeNodalArrayVars(ExecFlagType type, int group);
+  void computeElementalVars(ExecFlagType type, int group);
+  void computeElementalVecVars(ExecFlagType type, int group);
+  void computeElementalArrayVars(ExecFlagType type, int group);
+
+  template <typename AuxKernelType>
+  void computeElementalVarsHelper(const TheWarehouse::Query & query);
+
+  template <typename AuxKernelType>
+  void computeNodalVarsHelper(const TheWarehouse::Query & query);
+
+  /**
+   * Get every AuxKernel, of any value type, on a thread, in dependency order
+   *
+   * Dependencies are resolved within each execute_on flag, as they are for computing, so that
+   * kernels which only depend on each other under different flags are not a cycle. The flags are
+   * visited in the order they are registered and each kernel is listed once, at its first flag.
+   * @param tid The thread to retrieve the AuxKernels for
+   * @param active_only Whether to exclude disabled AuxKernels
+   */
+  std::vector<AuxKernelBase *> sortedAuxKernels(THREAD_ID tid, bool active_only);
+
+  libMesh::System & _sys;
+
+  /// solution vector from nonlinear solver
+  const NumericVector<Number> * _current_solution;
+
+  /// The current states of the solution (0 = current, 1 = old, etc)
+  std::vector<NumericVector<Number> *> _solution_state;
+
+  // Variables
+  std::vector<std::vector<MooseVariableFEBase *>> _nodal_vars;
+
+  ///@{
+  /**
+   * Elemental variables. These may be either finite element or finite volume variables
+   */
+  std::vector<std::vector<MooseVariableFieldBase *>> _elem_vars;
+  ///@}
+
+  // Storage for AuxScalarKernel objects
+  ExecuteMooseObjectWarehouse<AuxScalarKernel> _aux_scalar_storage;
+
+#ifdef MOOSE_KOKKOS_ENABLED
+  // Storage for KokkosAuxKernel objects
+  ExecuteMooseObjectWarehouse<AuxKernelBase> _kokkos_nodal_aux_storage;
+  ExecuteMooseObjectWarehouse<AuxKernelBase> _kokkos_elemental_aux_storage;
+
+  /// Kokkos auxiliary kernels computed in a single device pass
+  struct KokkosAuxStage
+  {
+    KokkosAuxStage();
+
+    /// Nodal kernels, which read coupled values from DOFs and are computed first
+    MooseObjectWarehouse<AuxKernelBase> nodal;
+    /// Elemental kernels, which read coupled values from the cached quadrature point values
+    MooseObjectWarehouse<AuxKernelBase> elemental;
+  };
+
+  /// Active Kokkos auxiliary kernels of each execution flag grouped into stages, where a kernel
+  /// coupling the current value of a variable runs in a later stage than the kernels writing it
+  std::map<ExecFlagType, std::vector<KokkosAuxStage>> _kokkos_aux_stages;
+#endif
+
+  /// Execution order groups present within the simulation
+  std::set<int> _execution_order_groups;
+
+  friend class ComputeIndicatorThread;
+  friend class ComputeMarkerThread;
+  friend class FlagElementsThread;
+  friend class ComputeNodalKernelsThread;
+  friend class ComputeNodalKernelBcsThread;
+  friend class ComputeNodalKernelJacobiansThread;
+  friend class ComputeNodalKernelBCJacobiansThread;
+
+  NumericVector<Number> & solutionInternal() const override { return *_sys.solution; }
+};
+
+#ifdef MOOSE_KOKKOS_ENABLED
+inline const ExecuteMooseObjectWarehouse<AuxKernelBase> &
+AuxiliarySystem::kokkosNodalAuxWarehouse() const
+{
+  return _kokkos_nodal_aux_storage;
+}
+
+inline const ExecuteMooseObjectWarehouse<AuxKernelBase> &
+AuxiliarySystem::kokkosElemAuxWarehouse() const
+{
+  return _kokkos_elemental_aux_storage;
+}
+#endif

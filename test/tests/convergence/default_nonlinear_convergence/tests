@@ -1,0 +1,52 @@
+[Tests]
+  design = 'DefaultNonlinearConvergence.md'
+  issues = '#25931'
+
+  [single_system]
+    type = CSVDiff
+    input = 'default_nonlinear_convergence.i'
+    csvdiff = 'default_nonlinear_convergence_out.csv'
+    expect_out = 'Converged due to absolute residual'
+    requirement = 'The system shall be able to determine convergence of the nonlinear solve using default criteria through an object.'
+  []
+  [multi_system]
+    type = RunApp
+    input = 'multi_system.i'
+    expect_out = 'u_conv: Converged due to.*relative tolerance \(1e-08\).*v_conv: Converged due to.*absolute tolerance \(1e-09\)'
+    requirement = 'The system shall be able to determine convergence of each nonlinear solve when there are multiple nonlinear systems in the same application.'
+    issues = '#33271'
+  []
+  [petsc_tolerance_mismatch]
+    type = RunApp
+    input = 'default_nonlinear_convergence.i'
+    cli_args = "Executioner/petsc_options_iname='-pc_type -snes_rtol' Executioner/petsc_options_value='hypre 1e-6'"
+    allow_warnings = true
+    expect_out = "PETSc SNES option\(s\) were set to a value different from what this Convergence object enforces"
+    requirement = 'The system shall warn if a PETSc SNES tolerance or iteration count option is set to a value that differs from what the default nonlinear convergence object enforces, since such options are otherwise silently ignored.'
+    issues = '#33799'
+  []
+  [error_reporting]
+    requirement = 'The system shall report an error for the default nonlinear convergence class'
+    [multiple_objects]
+      type = RunException
+      input = 'default_nonlinear_convergence.i'
+      cli_args = "Convergence/conv2/type=DefaultNonlinearConvergence"
+      expect_err = "Only one DefaultNonlinearConvergence may be constructed"
+      detail = 'if multiple instances are created.'
+      skip = '#28936'
+    []
+    [conflicting_criteria]
+      type = RunException
+      input = 'default_nonlinear_convergence.i'
+      cli_args = "Executioner/nl_abs_tol=1e-20"
+      expect_err = "The following parameters were set in both this Convergence object and the executioner:\s+nl_abs_tol"
+      detail = 'if convergence criteria are additionally specified in the executioner.'
+    []
+    [invalid_iteration_type]
+      type = RunException
+      input = 'invalid_iteration_type.i'
+      expect_err = "DefaultNonlinearConvergence can only be used with nonlinear solves"
+      detail = 'if used with an invalid iteration type.'
+    []
+  []
+[]

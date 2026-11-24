@@ -1,0 +1,12 @@
+[Tests]
+  [./test]
+    type = 'Exodiff'
+    input = 'nodal_flood_periodic.i'
+    exodiff = 'out.e out.e-s005'
+    allow_test_objects = true
+    max_parallel = 1 # See #9886
+    issues = '#1037'
+    design = 'FeatureFloodCount.md'
+    requirement = 'The system shall correctly identify and count nodal features across periodic boundaries.'
+  [../]
+[]

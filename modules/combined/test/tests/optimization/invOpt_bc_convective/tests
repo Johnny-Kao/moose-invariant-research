@@ -1,0 +1,21 @@
+[Tests]
+  issues = '#21885'
+  design = 'Optimize.md'
+  [taobqnls]
+    type = CSVDiff
+    max_threads = 1
+    rel_err = 0.1
+    input = main.i
+    csvdiff = forward_vertical_0001.csv
+    # steady solve
+    recover = false
+    requirement = 'The system shall be able to solve an inverse boundary value problem using TAO.'
+  []
+  [grad_check]
+    type = TaoGradientTester
+    input = main.i
+    max_rel_tol = 6e-3
+    issues = '#32496'
+    requirement = 'The system shall be able to accurately compute the gradient for an inverse boundary value.'
+  []
+[]

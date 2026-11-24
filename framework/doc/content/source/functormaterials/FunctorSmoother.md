@@ -1,0 +1,45 @@
+# FunctorSmoother
+
+!syntax description /FunctorMaterials/FunctorSmoother
+
+Three heuristics have been implemented for smoothing a functor (or several). These heuristics have
+only been implemented for the `ElemArg` functor argument. Functor arguments are explained in
+the [Functor documentation](syntax/Functors/index.md).
+
+- face averaging
+
+The elemental value of the smoothed functor is equal to the arithmetic average of the values of the previous
+functor on the faces of the element.
+
+- node averaging
+
+The nodal value of the smoothed functor is equal to the arithmetic average of the values of the input functor
+on the nodes at the other end of the edges connected to this node.
+
+- neighbor averaging
+
+The elemental value of the smoothed functor is equal to the arithmetic average of the values of the previous
+functor at the neighbors of the element.
+
+- checkerboard removing
+
+The elemental value of the smoothed functor is equal to the average of the current functor element value and the two neighbor values
+that are the furthest from the current functor element value.
+The logic behind this heuristic is to average neighboring checkerboard values.
+
+The value of the smoothed functor on elements can be visualized using a [FunctorAux.md].
+
+!alert note
+No volume or area weighting is currently implemented in the `FunctorSmoother`. Feel free to experiment
+with weighting schemes and make a contribution to MOOSE if they are valuable.
+
+!alert note
+While the block restriction of the functors created can be specified, the block or boundary restriction of the sources
+is not implemented. You can use intermediate filter functor materials (for example block-restricted [ParsedFunctorMaterial.md])
+to perform such a source restriction.
+
+!syntax parameters /FunctorMaterials/FunctorSmoother
+
+!syntax inputs /FunctorMaterials/FunctorSmoother
+
+!syntax children /FunctorMaterials/FunctorSmoother

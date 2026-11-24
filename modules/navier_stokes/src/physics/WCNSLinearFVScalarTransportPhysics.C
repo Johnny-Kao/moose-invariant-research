@@ -1,0 +1,294 @@
+//* This file is part of the MOOSE framework
+//* https://mooseframework.inl.gov
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "WCNSLinearFVScalarTransportPhysics.h"
+#include "WCNSFVFlowPhysicsBase.h"
+#include "NSFVUtils.h"
+#include "NS.h"
+
+registerNavierStokesPhysicsBaseTasks("NavierStokesApp", WCNSLinearFVScalarTransportPhysics);
+registerWCNSFVScalarTransportBaseTasks("NavierStokesApp", WCNSLinearFVScalarTransportPhysics);
+registerMooseAction("NavierStokesApp",
+                    WCNSLinearFVScalarTransportPhysics,
+                    "add_interpolation_method_physics");
+
+InputParameters
+WCNSLinearFVScalarTransportPhysics::validParams()
+{
+  InputParameters params = WCNSFVScalarTransportPhysicsBase::validParams();
+  params.addClassDescription("Define the Navier Stokes weakly-compressible scalar field transport "
+                             "equation(s) using the linear finite volume discretization");
+  params.set<MooseEnum>("passive_scalar_advection_interpolation") =
+      NS::fvAdvectedInterpolationMethods();
+  params.addParam<InterpolationMethodName>(
+      "passive_scalar_advection_interpolation_method_name",
+      "Name of an externally defined FVInterpolationMethod to use for passive scalar advection. "
+      "When provided, this overrides 'passive_scalar_advection_interpolation'.");
+  params.addParam<bool>("use_nonorthogonal_correction",
+                        true,
+                        "If the nonorthogonal correction should be used when computing the normal "
+                        "gradient, notably in the diffusion term.");
+
+  // Not supported
+  params.suppressParameter<MooseEnum>("preconditioning");
+
+  params.addParamNamesToGroup("passive_scalar_advection_interpolation_method_name",
+                              "Numerical scheme");
+
+  return params;
+}
+
+WCNSLinearFVScalarTransportPhysics::WCNSLinearFVScalarTransportPhysics(
+    const InputParameters & parameters)
+  : WCNSFVScalarTransportPhysicsBase(parameters)
+{
+  addRequiredPhysicsTask("add_interpolation_method_physics");
+}
+
+MooseFunctorName
+WCNSLinearFVScalarTransportPhysics::fluidFractionScaled(const MooseFunctorName & functor)
+{
+  // The scalars are concentrations per unit fluid volume, so storage, diffusion and sources act on
+  // the fluid fraction of the volume. Advection uses the superficial face flux unscaled.
+  return _porous_medium_treatment
+             ? addPorosityScaledFunctor(
+                   _flow_equations_physics->getPorosityFunctorName(/*smoothed=*/false), functor)
+             : functor;
+}
+
+void
+WCNSLinearFVScalarTransportPhysics::addFVInterpolationMethods()
+{
+  if (!_has_scalar_equation || isParamValid("passive_scalar_advection_interpolation_method_name"))
+    return;
+
+  addFVAdvectedInterpolationMethod(getParam<MooseEnum>("passive_scalar_advection_interpolation"));
+}
+
+void
+WCNSLinearFVScalarTransportPhysics::addSolverVariables()
+{
+  // For compatibility with Modules/NavierStokesFV syntax
+  if (!_has_scalar_equation)
+    return;
+
+  auto params = getFactory().getValidParams("MooseLinearVariableFVReal");
+
+  for (const auto name_i : index_range(_passive_scalar_names))
+  {
+    // Dont add if the user already defined the variable
+    if (!shouldCreateVariable(_passive_scalar_names[name_i], _blocks, /*error if aux*/ true))
+    {
+      reportPotentiallyMissedParameters({"system_names", "passive_scalar_scaling"},
+                                        "MooseLinearVariableFVReal");
+      continue;
+    }
+
+    if (isParamValid("passive_scalar_scaling"))
+      params.set<std::vector<Real>>("scaling") = {
+          getParam<std::vector<Real>>("passive_scalar_scaling")[name_i]};
+
+    addSharedSolverVariable("MooseLinearVariableFVReal", _passive_scalar_names[name_i], params);
+  }
+}
+
+void
+WCNSLinearFVScalarTransportPhysics::addScalarTimeKernels()
+{
+  std::string kernel_type = "LinearFVTimeDerivative";
+  InputParameters params = getFactory().getValidParams(kernel_type);
+  assignBlocks(params, _blocks);
+  if (_porous_medium_treatment)
+    params.set<MooseFunctorName>("factor") = fluidFractionScaled("1");
+
+  for (const auto & vname : _passive_scalar_names)
+  {
+    params.set<LinearVariableName>("variable") = vname;
+    if (shouldCreateTimeDerivative(vname, _blocks, /*error if already defined */ false))
+      getProblem().addLinearFVKernel(kernel_type, prefix() + "ins_" + vname + "_time", params);
+  }
+}
+
+void
+WCNSLinearFVScalarTransportPhysics::addScalarAdvectionKernels()
+{
+  const auto method_name =
+      isParamValid("passive_scalar_advection_interpolation_method_name")
+          ? getParam<InterpolationMethodName>("passive_scalar_advection_interpolation_method_name")
+          : InterpolationMethodName(
+                std::string(getParam<MooseEnum>("passive_scalar_advection_interpolation")));
+
+  const std::string kernel_type = "LinearFVScalarAdvection";
+  InputParameters params = getFactory().getValidParams(kernel_type);
+
+  assignBlocks(params, _blocks);
+  params.set<UserObjectName>("rhie_chow_user_object") = _flow_equations_physics->rhieChowUOName();
+  params.set<InterpolationMethodName>("advected_interp_method_name") = method_name;
+  setSlipVelocityParams(params);
+
+  for (const auto & vname : _passive_scalar_names)
+  {
+    params.set<LinearVariableName>("variable") = vname;
+    getProblem().addLinearFVKernel(kernel_type, prefix() + "ins_" + vname + "_advection", params);
+  }
+}
+
+void
+WCNSLinearFVScalarTransportPhysics::addScalarDiffusionKernels()
+{
+  // Direct specification of diffusion term
+  const auto passive_scalar_diffusivities =
+      getParam<std::vector<MooseFunctorName>>("passive_scalar_diffusivity");
+
+  if (passive_scalar_diffusivities.size())
+  {
+    const std::string kernel_type = "LinearFVDiffusion";
+    InputParameters params = getFactory().getValidParams(kernel_type);
+    assignBlocks(params, _blocks);
+    params.set<bool>("use_nonorthogonal_correction") =
+        getParam<bool>("use_nonorthogonal_correction");
+    for (const auto name_i : index_range(_passive_scalar_names))
+    {
+      params.set<LinearVariableName>("variable") = _passive_scalar_names[name_i];
+      params.set<MooseFunctorName>("diffusion_coeff") = fluidFractionScaled(
+          passive_scalar_diffusivities[name_i] + (_has_turbulence_model ? "_plus_mut/Sc_t" : ""));
+      getProblem().addLinearFVKernel(
+          kernel_type, prefix() + "ins_" + _passive_scalar_names[name_i] + "_diffusion", params);
+    }
+  }
+}
+
+void
+WCNSLinearFVScalarTransportPhysics::addScalarSourceKernels()
+{
+  const std::string kernel_type = "LinearFVSource";
+  InputParameters params = getFactory().getValidParams(kernel_type);
+  assignBlocks(params, _blocks);
+  const auto source_scaling = fluidFractionScaled("1");
+
+  for (const auto scalar_i : index_range(_passive_scalar_names))
+  {
+    params.set<LinearVariableName>("variable") = _passive_scalar_names[scalar_i];
+
+    if (_passive_scalar_sources.size())
+    {
+      // Added for backward compatibility with former Modules/NavierStokesFV syntax
+      params.set<MooseFunctorName>("source_density") = _passive_scalar_sources[scalar_i];
+      params.set<MooseFunctorName>("scaling_factor") = source_scaling;
+      getProblem().addLinearFVKernel(
+          kernel_type, prefix() + "ins_" + _passive_scalar_names[scalar_i] + "_source", params);
+    }
+
+    if (_passive_scalar_coupled_sources.size())
+      for (const auto i : index_range(_passive_scalar_coupled_sources[scalar_i]))
+      {
+        params.set<MooseFunctorName>("source_density") =
+            _passive_scalar_coupled_sources[scalar_i][i];
+        params.set<MooseFunctorName>("scaling_factor") =
+            _passive_scalar_coupled_sources_coef.size()
+                ? fluidFractionScaled(
+                      Moose::stringify(_passive_scalar_coupled_sources_coef[scalar_i][i]))
+                : source_scaling;
+        if (_passive_scalar_coupled_sources_blocks.size())
+          params.set<std::vector<SubdomainName>>("block") =
+              _passive_scalar_coupled_sources_blocks[scalar_i][i];
+
+        getProblem().addLinearFVKernel(kernel_type,
+                                       prefix() + "ins_" + _passive_scalar_names[scalar_i] +
+                                           "_coupled_source_" + std::to_string(i),
+                                       params);
+      }
+  }
+}
+
+void
+WCNSLinearFVScalarTransportPhysics::addScalarInletBC()
+{
+  const auto & inlet_boundaries = _flow_equations_physics->getInletBoundaries();
+  if (inlet_boundaries.empty())
+    return;
+
+  // Boundary checks
+  // TODO: once we have vectors of MooseEnum, we could use the same templated check for types and
+  // functors
+  if (inlet_boundaries.size() * _passive_scalar_names.size() != _passive_scalar_inlet_types.size())
+    paramError(
+        "passive_scalar_inlet_types",
+        "The number of scalar inlet types (" + std::to_string(_passive_scalar_inlet_types.size()) +
+            ") is not equal to the number of inlet boundaries (" +
+            std::to_string(inlet_boundaries.size()) + ") times the number of passive scalars (" +
+            std::to_string(_passive_scalar_names.size()) + ")");
+  if (_passive_scalar_names.size() != _passive_scalar_inlet_functors.size())
+    paramError("passive_scalar_inlet_functors",
+               "The number of groups of inlet functors (" +
+                   std::to_string(_passive_scalar_inlet_functors.size()) +
+                   ") is not equal to the number of passive scalars (" +
+                   std::to_string(_passive_scalar_names.size()) + ")");
+
+  for (const auto name_i : index_range(_passive_scalar_names))
+  {
+    if (inlet_boundaries.size() != _passive_scalar_inlet_functors[name_i].size())
+      paramError("passive_scalar_inlet_functors",
+                 "The number of inlet boundary functors for scalar '" +
+                     _passive_scalar_names[name_i] +
+                     "' does not match the number of inlet boundaries (" +
+                     std::to_string(_passive_scalar_inlet_functors[name_i].size()) + ")");
+
+    unsigned int num_inlets = inlet_boundaries.size();
+    for (unsigned int bc_ind = 0; bc_ind < num_inlets; ++bc_ind)
+    {
+      if (_passive_scalar_inlet_types[name_i * num_inlets + bc_ind] == "fixed-value")
+      {
+        const std::string bc_type = "LinearFVAdvectionDiffusionFunctorDirichletBC";
+        InputParameters params = getFactory().getValidParams(bc_type);
+        params.set<LinearVariableName>("variable") = _passive_scalar_names[name_i];
+        params.set<MooseFunctorName>("functor") = _passive_scalar_inlet_functors[name_i][bc_ind];
+        params.set<std::vector<BoundaryName>>("boundary") = {inlet_boundaries[bc_ind]};
+
+        getProblem().addLinearFVBC(
+            bc_type, _passive_scalar_names[name_i] + "_" + inlet_boundaries[bc_ind], params);
+      }
+      else if (_passive_scalar_inlet_types[name_i * num_inlets + bc_ind] == "flux-mass" ||
+               _passive_scalar_inlet_types[name_i * num_inlets + bc_ind] == "flux-velocity")
+      {
+        mooseError("Flux boundary conditions not supported at this time using the linear finite "
+                   "volume discretization");
+      }
+    }
+  }
+}
+
+unsigned short
+WCNSLinearFVScalarTransportPhysics::getNumberAlgebraicGhostingLayersNeeded() const
+{
+  return 1;
+}
+
+void
+WCNSLinearFVScalarTransportPhysics::addScalarOutletBC()
+{
+  const auto & outlet_boundaries = _flow_equations_physics->getOutletBoundaries();
+  if (outlet_boundaries.empty())
+    return;
+
+  for (const auto & outlet_bdy : outlet_boundaries)
+  {
+    const std::string bc_type = "LinearFVAdvectionDiffusionOutflowBC";
+    InputParameters params = getFactory().getValidParams(bc_type);
+    params.set<std::vector<BoundaryName>>("boundary") = {outlet_bdy};
+    params.set<bool>("use_two_term_expansion") =
+        getParam<bool>("passive_scalar_two_term_bc_expansion");
+
+    for (const auto name_i : index_range(_passive_scalar_names))
+    {
+      params.set<LinearVariableName>("variable") = _passive_scalar_names[name_i];
+      getProblem().addLinearFVBC(bc_type, _passive_scalar_names[name_i] + "_" + outlet_bdy, params);
+    }
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "cells": {
+    "cmg_lattice_cell": {
+      "fill": "cmg_lattice",
+      "filltype": "LATTICE",
+      "region_infix": [
+        "-cmg_radial_boundary",
+        "&",
+        "+rgmb_axial_plane_bottom_boundary",
+        "&",
+        "-rgmb_axial_plane_top_boundary"
+      ],
+      "region_postfix": [
+        "cmg_radial_boundary",
+        "-",
+        "rgmb_axial_plane_bottom_boundary",
+        "+",
+        "&",
+        "rgmb_axial_plane_top_boundary",
+        "-",
+        "&"
+      ]
+    },
+    "empty_cell": {
+      "fill": "",
+      "filltype": "VOID",
+      "region_infix": [],
+      "region_postfix": []
+    },
+    "pin1_ducted_pin_unit_cell_radial_0": {
+      "fill": "rgmb_region_2",
+      "filltype": "CSG_MATERIAL",
+      "region_infix": [],
+      "region_postfix": []
+    },
+    "pin2_ducted_pin_unit_cell_radial_0": {
+      "fill": "rgmb_region_2",
+      "filltype": "CSG_MATERIAL",
+      "region_infix": [],
+      "region_postfix": []
+    }
+  },
+  "lattices": {
+    "cmg_lattice": {
+      "attributes": {
+        "nring": 2,
+        "nrow": 3,
+        "pitch": 1.42063
+      },
+      "outer": "empty_univ",
+      "outertype": "UNIVERSE",
+      "type": "CSG::CSGHexagonalLattice",
+      "universes": [
+        [
+          "empty_univ",
+          "pin2_ducted_pin_unit_expanded_root"
+        ],
+        [
+          "pin2_ducted_pin_unit_expanded_root",
+          "pin1_ducted_pin_unit_expanded_root",
+          "empty_univ"
+        ],
+        [
+          "empty_univ",
+          "pin2_ducted_pin_unit_expanded_root"
+        ]
+      ]
+    }
+  },
+  "surfaces": {
+    "cmg_radial_boundary": {
+      "coefficients": {
+        "r": 3.551575,
+        "x0": 0.0,
+        "y0": 0.0
+      },
+      "type": "CSG::CSGZCylinder"
+    },
+    "rgmb_axial_plane_bottom_boundary": {
+      "coefficients": {
+        "a": 0.0,
+        "b": 0.0,
+        "c": 1.0,
+        "d": 0.0
+      },
+      "type": "CSG::CSGPlane"
+    },
+    "rgmb_axial_plane_top_boundary": {
+      "coefficients": {
+        "a": 0.0,
+        "b": 0.0,
+        "c": 1.0,
+        "d": 1.0
+      },
+      "type": "CSG::CSGPlane"
+    }
+  },
+  "universes": {
+    "ROOT_UNIVERSE": {
+      "cells": [
+        "cmg_lattice_cell"
+      ],
+      "root": true
+    },
+    "empty_univ": {
+      "cells": [
+        "empty_cell"
+      ]
+    },
+    "pin1_ducted_pin_unit_expanded_root": {
+      "cells": [
+        "pin1_ducted_pin_unit_cell_radial_0"
+      ]
+    },
+    "pin2_ducted_pin_unit_expanded_root": {
+      "cells": [
+        "pin2_ducted_pin_unit_cell_radial_0"
+      ]
+    }
+  }
+}
