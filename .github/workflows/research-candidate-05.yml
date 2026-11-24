@@ -16,6 +16,30 @@ jobs:
           persist-credentials: false
       - name: Run deterministic RED/GREEN model
         run: python3 research/candidate_05_compressor_speed_oob.py
+      - name: Compile exact one-point indexing under ASan
+        run: |
+          cat > /tmp/candidate05.cpp <<'CPP'
+          #include <vector>
+          int main() {
+            std::vector<double> speeds{1.0};
+            const unsigned int n_speeds = speeds.size();
+            const double speed = 0.5;
+            unsigned int x1, x2;
+            if (speed < speeds[0]) { x1 = 0; x2 = 1; }
+            else if (speed > speeds.back()) { x1 = n_speeds - 1; x2 = n_speeds - 2; }
+            else { x1 = 0; x2 = 1; }
+            volatile double value = speeds[x1] + speeds[x2];
+            return value == 0.0;
+          }
+          CPP
+          g++ -std=c++17 -fsanitize=address -fno-sanitize-recover=address \
+            /tmp/candidate05.cpp -o /tmp/candidate05
+          set +e
+          /tmp/candidate05
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          echo "ASan RED confirmed with exit code $rc"
       - name: Pin unsafe cardinality contract and indexing
         run: |
           python3 - <<'PY'

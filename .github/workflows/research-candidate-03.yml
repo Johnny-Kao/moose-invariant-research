@@ -16,6 +16,27 @@ jobs:
           persist-credentials: false
       - name: Run deterministic RED/GREEN model
         run: python3 research/candidate_03_libtorch_batch_zero.py
+      - name: Compile exact C++ arithmetic under UBSan
+        run: |
+          cat > /tmp/candidate03.cpp <<'CPP'
+          #include <cstdint>
+          int main() {
+            const unsigned int num_samples = 3, num_batches = 2;
+            const unsigned int sample_per_batch_1 = num_samples / num_batches;
+            const unsigned int sample_per_batch_2 = sample_per_batch_1 - 1;
+            volatile unsigned int remainder_2 =
+                num_samples - (num_samples / sample_per_batch_2) * sample_per_batch_2;
+            return static_cast<int>(remainder_2);
+          }
+          CPP
+          g++ -std=c++17 -fsanitize=undefined -fno-sanitize-recover=undefined \
+            /tmp/candidate03.cpp -o /tmp/candidate03
+          set +e
+          /tmp/candidate03
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          echo "UBSan RED confirmed with exit code $rc"
       - name: Pin production expression and parameter contract
         run: |
           python3 - <<'PY'
