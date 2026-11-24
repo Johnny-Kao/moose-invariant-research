@@ -1,0 +1,29 @@
+name: Research candidate 03 libtorch batch zero
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run deterministic RED/GREEN model
+        run: python3 research/candidate_03_libtorch_batch_zero.py
+      - name: Pin production expression and parameter contract
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          trainer = Path('framework/src/libtorch/utils/LibtorchArtificialNeuralNetTrainer.C').read_text()
+          ann = Path('modules/stochastic_tools/src/libtorch/trainers/LibtorchANNTrainer.C').read_text()
+          assert 'const unsigned int sample_per_batch_2 = sample_per_batch_1 - 1;' in trainer
+          assert 'num_samples / sample_per_batch_2' in trainer
+          assert '"1<=num_batches"' in ann
+          print('verified zero-divisor expression and valid num_batches contract')
+          PY
