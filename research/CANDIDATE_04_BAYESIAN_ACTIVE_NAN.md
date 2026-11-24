@@ -41,7 +41,7 @@ that preserves the existing metric.
 ## Collision status
 
 No exact upstream issue/PR collision was found for `computeConvergenceValue` or
-`num_valid` at `next` HEAD `09f3b86652118bc759d889fe0235434c4bb02a54`.
+`num_valid` at `next` HEAD `a75b6945b77ef4d783406982cea3e9ff753903a0`.
 
 ## Gate status
 

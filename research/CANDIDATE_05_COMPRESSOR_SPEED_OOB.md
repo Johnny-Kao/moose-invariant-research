@@ -49,7 +49,7 @@ instead of entering interpolation.
 ## Collision status
 
 No exact issue/PR collision was found for the class, speed-table cardinality, or
-the index logic at `next` HEAD `09f3b86652118bc759d889fe0235434c4bb02a54`.
+the index logic at `next` HEAD `a75b6945b77ef4d783406982cea3e9ff753903a0`.
 The older related PR [#24303](https://github.com/idaholab/moose/pull/24303)
 added array-component sample-transfer support and does not touch this
 thermal-hydraulics user object or its interpolation precondition.

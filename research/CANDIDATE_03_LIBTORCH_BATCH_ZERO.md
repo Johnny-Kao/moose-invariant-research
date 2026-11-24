@@ -40,7 +40,7 @@ return `sample_per_batch_1`; add a regression for `(3,2)` plus existing divisibl
 ## Collision status
 
 No exact upstream issue/PR collision was found by source-symbol and parameter searches
-at `next` HEAD `09f3b86652118bc759d889fe0235434c4bb02a54`.
+at `next` HEAD `a75b6945b77ef4d783406982cea3e9ff753903a0`.
 
 ## Gate status
 

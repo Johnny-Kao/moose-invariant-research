@@ -2,7 +2,7 @@
 
 ## Pinned source
 
-- Upstream: `idaholab/moose`, branch `next`, `09f3b86652118bc759d889fe0235434c4bb02a54`
+- Upstream: `idaholab/moose`, branch `next`, `a75b6945b77ef4d783406982cea3e9ff753903a0`
 - Research mirror: `Johnny-Kao/moose-invariant-research`, `main`, `f0a1d31a9b80e59b365488f90e75f26c85bce4b6`
 
 ## Initial hypothesis (rejected)

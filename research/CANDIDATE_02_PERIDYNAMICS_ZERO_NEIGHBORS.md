@@ -43,7 +43,7 @@ two-element case that remains finite.
 
 Exact symbol searches (`n_fe_neighbors`, `pdnode_average_spacing`) and related issue
 searches found no exact upstream issue/PR at `next` HEAD
-`09f3b86652118bc759d889fe0235434c4bb02a54`. Existing peridynamics singular-shape
+`a75b6945b77ef4d783406982cea3e9ff753903a0`. Existing peridynamics singular-shape
 tensor issue #15394 is a different downstream invariant.
 
 ## Gate status
