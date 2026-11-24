@@ -1,0 +1,29 @@
+name: Research candidate 05 compressor speed OOB
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run deterministic RED/GREEN model
+        run: python3 research/candidate_05_compressor_speed_oob.py
+      - name: Pin unsafe cardinality contract and indexing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('modules/thermal_hydraulics/src/userobjects/ADShaftConnectedCompressor1PhaseUserObject.C')
+          s = p.read_text()
+          assert 'if (_n_speeds != _Rp_function_names.size() || _n_speeds != _eff_function_names.size())' in s
+          assert '_speeds[x2]' in s and '_Rp_functions[x2]' in s and '_eff_functions[x2]' in s
+          assert 'size() < 2' not in s
+          print('verified missing cardinality guard and unsafe interpolation indexing')
+          PY
