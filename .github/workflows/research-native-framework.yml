@@ -33,3 +33,9 @@ jobs:
       - name: Record native build result
         shell: bash -el {0}
         run: test -x test/moose_test-opt
+      - name: Run existing MultiApp transfer baseline
+        shell: bash -el {0}
+        run: |
+          export PATH="$PWD/test:$PATH"
+          cd test/tests/transfers/multiapp_variable_value_sample_transfer
+          ../../../moose_test-opt -i pp_parent.i --no-color
