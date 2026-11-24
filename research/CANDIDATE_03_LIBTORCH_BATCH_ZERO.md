@@ -20,9 +20,10 @@ the comparison branch must never construct a zero divisor.
 
 ## Reproduction result
 
-Research Actions model `candidate_03_libtorch_batch_zero.py` reproduces the zero
-divisor as RED and verifies the minimal guard as GREEN. Native libtorch execution is
-still required for staging because the module is optional at build time.
+Research Actions model plus a C++ UBSan harness reproduce the zero divisor as RED
+and verify the minimal guard as GREEN: [45470911015](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45470911015).
+Native libtorch execution is still required for staging because the module is optional
+at build time.
 
 ## Actual consequence
 

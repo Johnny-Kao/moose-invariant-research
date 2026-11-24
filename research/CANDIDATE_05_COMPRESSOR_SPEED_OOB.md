@@ -22,9 +22,10 @@ functions.
 
 ## Reproduction result
 
-Research Actions model `candidate_05_compressor_speed_oob.py` reproduces the
-one-point table index `(0,1)` as RED and verifies a minimum-cardinality guard as
-GREEN. Native thermal-hydraulics integration is still required before staging.
+Research Actions model plus a C++ ASan harness reproduce the one-point table index
+`(0,1)` as RED and verify a minimum-cardinality guard as GREEN:
+[45470918068](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45470918068).
+Native thermal-hydraulics integration is still required before staging.
 
 ## Actual consequence
 
