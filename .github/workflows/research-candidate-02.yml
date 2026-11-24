@@ -16,6 +16,23 @@ jobs:
           persist-credentials: false
       - name: Run deterministic RED/GREEN model
         run: python3 research/candidate_02_peridynamics_zero_neighbors.py
+      - name: Run C++ floating-point RED/GREEN harness
+        run: |
+          cat > /tmp/pd_spacing.cpp <<'CPP'
+          #include <cmath>
+          #include <iostream>
+          int main() {
+            const double dist_sum = 0.0;
+            const unsigned n = 0;
+            const double baseline = dist_sum / n;
+            if (!std::isnan(baseline)) return 1;
+            const double guarded = n == 0 ? 0.0 : dist_sum / n;
+            if (!std::isfinite(guarded)) return 2;
+            std::cout << "baseline=NaN guarded=" << guarded << '\\n';
+          }
+          CPP
+          g++ -std=c++17 -Wall -Wextra -fsanitize=undefined -fno-sanitize-recover=undefined /tmp/pd_spacing.cpp -o /tmp/pd_spacing
+          /tmp/pd_spacing
       - name: Pin production division and missing guard
         run: |
           python3 - <<'PY'

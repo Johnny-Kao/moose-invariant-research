@@ -16,6 +16,23 @@ jobs:
           persist-credentials: false
       - name: Run deterministic RED/GREEN model
         run: python3 research/candidate_04_bayesian_active_nan.py
+      - name: Run C++ NaN-state RED/GREEN harness
+        run: |
+          cat > /tmp/bayes_nan.cpp <<'CPP'
+          #include <cmath>
+          #include <iostream>
+          int main() {
+            const double sum = 0.0;
+            const unsigned valid = 0;
+            const double baseline = std::sqrt(sum) / valid;
+            if (!std::isnan(baseline)) return 1;
+            const double guarded = valid == 0 ? 0.0 : std::sqrt(sum) / valid;
+            if (!std::isfinite(guarded)) return 2;
+            std::cout << "baseline=NaN guarded=" << guarded << '\\n';
+          }
+          CPP
+          g++ -std=c++17 -Wall -Wextra /tmp/bayes_nan.cpp -o /tmp/bayes_nan
+          /tmp/bayes_nan
       - name: Pin production filter and unguarded division
         run: |
           python3 - <<'PY'

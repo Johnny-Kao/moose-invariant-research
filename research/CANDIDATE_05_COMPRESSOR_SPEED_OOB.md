@@ -14,6 +14,12 @@ One speed curve is accepted by the current parameter contract. A compressor can
 operate at a speed different from that table point during startup, shutdown, or
 control changes, reaching the unsafe branch.
 
+The in-tree thermal-hydraulics compressor regressions use multi-point tables
+(11 points in `jac.test.i` and 10 points in `shaft_motor_compressor.i`), which
+confirms that the intended interpolation contract is a bracketing table rather
+than a single constant point. Those tests do not exercise the accepted
+one-point boundary.
+
 ## Violated invariant
 
 The interpolation path requires two distinct bracketing/extrapolation points;
@@ -44,6 +50,9 @@ instead of entering interpolation.
 
 No exact issue/PR collision was found for the class, speed-table cardinality, or
 the index logic at `next` HEAD `09f3b86652118bc759d889fe0235434c4bb02a54`.
+The older related PR [#24303](https://github.com/idaholab/moose/pull/24303)
+added array-component sample-transfer support and does not touch this
+thermal-hydraulics user object or its interpolation precondition.
 
 ## Gate status
 
