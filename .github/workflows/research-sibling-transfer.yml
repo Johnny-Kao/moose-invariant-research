@@ -16,7 +16,7 @@ jobs:
           persist-credentials: false
       - name: Run deterministic RED/GREEN contract reproducer
         run: python3 research/sibling_transfer_allocation_repro.py
-      - name: Assert affected source expressions are present
+      - name: Assert source and target ownership checks are present
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -29,7 +29,7 @@ jobs:
           ]
           for name in files:
               text = Path(name).read_text()
-              needle = "getFromMultiApp()->hasLocalApp(i) + getFromMultiApp()->hasLocalApp(i)"
-              assert needle in text, f"expected current candidate expression missing: {name}"
-          print(f"verified {len(files)} affected validators at the checked-out source")
+              needle = "getFromMultiApp()->hasLocalApp(i) + getToMultiApp()->hasLocalApp(i)"
+              assert needle in text, f"expected source/target guard missing: {name}"
+          print(f"verified {len(files)} source/target guards at the checked-out source")
           PY
