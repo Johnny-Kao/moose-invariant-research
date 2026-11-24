@@ -26,7 +26,8 @@ The Research Actions model in `candidate_01_sample_pp_amr_cache.py` reproduces
 the lifecycle: pre-AMR mapping `[0, 1]`, post-AMR mapping `[2, 0, 1]`; baseline
 execution consumes stale prefix `[0, 1, 2]`, while clearing before rebuild gives
 `[2, 0, 1]`. This is a contract-level RED/GREEN model, not yet a full MOOSE
-binary integration test.
+binary integration test. The same lifecycle also passes a Linux C++ cache
+harness in [45471920306](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45471920306).
 
 ## Actual consequence
 
