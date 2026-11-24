@@ -2,6 +2,8 @@ name: Research native framework build probe
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
