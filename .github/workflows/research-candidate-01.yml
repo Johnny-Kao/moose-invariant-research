@@ -1,0 +1,32 @@
+name: Research candidate 01 AMR cache
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run lifecycle RED/GREEN model
+        run: python3 research/candidate_01_sample_pp_amr_cache.py
+      - name: Pin production cache lifecycle
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('framework/src/transfers/MultiAppVariableValueSamplePostprocessorTransfer.C')
+          s = p.read_text()
+          assert 'void\nMultiAppVariableValueSamplePostprocessorTransfer::meshChanged()' in s
+          assert 'cacheElemToPostprocessorData();' in s
+          marker = 'void\nMultiAppVariableValueSamplePostprocessorTransfer::cacheElemToPostprocessorData()'
+          body = s[s.index(marker):s.index('void\nMultiAppVariableValueSamplePostprocessorTransfer::initialSetup()')]
+          assert '_cached_multiapp_pos_ids.clear()' not in body
+          assert '_needed_postprocessors.clear()' not in body
+          print('verified append-only cache rebuild on pinned production source')
+          PY
