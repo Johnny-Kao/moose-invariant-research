@@ -1,0 +1,68 @@
+name: Research current upstream candidate assertions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch pinned upstream next source
+        env:
+          UPSTREAM_SHA: a75b6945b77ef4d783406982cea3e9ff753903a0
+        run: |
+          mkdir -p /tmp/upstream-source
+          while IFS= read -r path; do
+            mkdir -p "/tmp/upstream-source/$(dirname "$path")"
+            curl --fail --silent --show-error --location \
+              "https://raw.githubusercontent.com/idaholab/moose/${UPSTREAM_SHA}/${path}" \
+              -o "/tmp/upstream-source/$path"
+          done <<'EOF'
+          framework/src/transfers/MultiAppVariableValueSamplePostprocessorTransfer.C
+          modules/peridynamics/src/mesh/PeridynamicsMesh.C
+          framework/src/libtorch/utils/LibtorchArtificialNeuralNetTrainer.C
+          modules/stochastic_tools/src/reporters/BayesianActiveLearner.C
+          modules/thermal_hydraulics/src/userobjects/ADShaftConnectedCompressor1PhaseUserObject.C
+          EOF
+      - name: Assert all five candidate source contracts on current upstream
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('/tmp/upstream-source')
+          checks = {
+              'framework/src/transfers/MultiAppVariableValueSamplePostprocessorTransfer.C': [
+                  ('cacheElemToPostprocessorData();', 2),
+                  ('_cached_multiapp_pos_ids.clear()', 0),
+              ],
+              'modules/peridynamics/src/mesh/PeridynamicsMesh.C': [
+                  ('_pdnode_average_spacing[id] = dist_sum / n_fe_neighbors;', 1),
+                  ('if (n_fe_neighbors == 0)', 0),
+              ],
+              'framework/src/libtorch/utils/LibtorchArtificialNeuralNetTrainer.C': [
+                  ('sample_per_batch_2 = sample_per_batch_1 - 1', 1),
+                  ('if (sample_per_batch_1 <= 1)', 0),
+              ],
+              'modules/stochastic_tools/src/reporters/BayesianActiveLearner.C': [
+                  ('convergence_value = std::sqrt(convergence_value) / num_valid;', 1),
+                  ('if (num_valid == 0)', 0),
+              ],
+              'modules/thermal_hydraulics/src/userobjects/ADShaftConnectedCompressor1PhaseUserObject.C': [
+                  ('if (_n_speeds != _Rp_function_names.size()', 1),
+                  ('if (_n_speeds < 2)', 0),
+                  ('x2 = 1;', 1),
+              ],
+          }
+          for rel, assertions in checks.items():
+              text = (root / rel).read_text()
+              for needle, expected in assertions:
+                  actual = text.count(needle)
+                  assert actual >= expected, (rel, needle, actual, expected)
+          print('all five candidate contracts still present at upstream next a75b6945')
+          PY
