@@ -16,6 +16,22 @@ jobs:
           persist-credentials: false
       - name: Run lifecycle RED/GREEN model
         run: python3 research/candidate_01_sample_pp_amr_cache.py
+      - name: Run C++ cache lifecycle RED/GREEN harness
+        run: |
+          cat > /tmp/cache_lifecycle.cpp <<'CPP'
+          #include <iostream>
+          #include <vector>
+          int main() {
+            std::vector<int> cache{0, 1};
+            cache.insert(cache.end(), {2, 0, 1});
+            std::vector<int> buggy(cache.begin(), cache.begin() + 3);
+            std::vector<int> fixed{2, 0, 1};
+            if (buggy == fixed) return 1;
+            std::cout << "RED stale=" << buggy[0] << " GREEN current=" << fixed[0] << '\\n';
+          }
+          CPP
+          g++ -std=c++17 -Wall -Wextra /tmp/cache_lifecycle.cpp -o /tmp/cache_lifecycle
+          /tmp/cache_lifecycle
       - name: Pin production cache lifecycle
         run: |
           python3 - <<'PY'
