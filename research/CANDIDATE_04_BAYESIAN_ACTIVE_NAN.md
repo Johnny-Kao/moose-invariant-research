@@ -23,7 +23,8 @@ must never be represented by an arithmetic NaN.
 
 Research Actions model `candidate_04_bayesian_active_nan.py` reproduces the zero-valid
 path as RED and verifies an explicit diagnostic as GREEN. Native libtorch integration
-is still required before staging.
+is still required before staging. A follow-up Linux C++ NaN-state harness passed in
+[45471574817](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45471574817).
 
 ## Actual consequence
 

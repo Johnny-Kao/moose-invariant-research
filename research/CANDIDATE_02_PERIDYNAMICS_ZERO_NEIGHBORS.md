@@ -23,7 +23,8 @@ positive before bond construction and constitutive calculations.
 Research Actions model `candidate_02_peridynamics_zero_neighbors.py` reproduces the
 zero-neighbor path as RED and verifies a minimal explicit rejection as GREEN. This is
 currently a deterministic source-contract model; native peridynamics integration is
-still required before staging.
+still required before staging. A follow-up Linux C++ floating-point harness also
+passed in [45471566219](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45471566219).
 
 ## Actual consequence
 
