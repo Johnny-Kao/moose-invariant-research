@@ -43,8 +43,11 @@ compare the mapped element values against the current child positions.
 
 ## Collision status
 
-No exact issue/PR collision has been established yet. Search is pending after
-the source-level reproduction; no upstream action taken.
+As of upstream `next` HEAD `09f3b86652118bc759d889fe0235434c4bb02a54`, exact
+symbol searches for `cached_multiapp_pos_ids` and this transfer/cache lifecycle
+did not return an upstream issue or PR. Related search hits concern ghosted
+vector/active-solution tags and a separate FV adaptivity issue, not this cache
+invariant. No upstream action taken.
 
 ## Gate status
 
