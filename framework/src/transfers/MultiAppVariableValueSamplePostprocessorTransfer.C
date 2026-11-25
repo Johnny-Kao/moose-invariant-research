@@ -67,7 +67,8 @@ MultiAppVariableValueSamplePostprocessorTransfer::MultiAppVariableValueSamplePos
     _var_name(getParam<VariableName>("source_variable")),
     _comp(getParam<unsigned int>("source_variable_component")),
     _var(_fe_problem.getVariable(0, _var_name)),
-    _map_comp_to_child(getParam<bool>("map_array_variable_components_to_child_apps"))
+    _map_comp_to_child(getParam<bool>("map_array_variable_components_to_child_apps")),
+    _apps_per_component(0)
 {
   if (_directions.size() != 1)
     paramError("direction", "This transfer is only unidirectional");
@@ -130,6 +131,11 @@ void
 MultiAppVariableValueSamplePostprocessorTransfer::cacheElemToPostprocessorData()
 {
   if (!_directions.isValueSet("from_multiapp"))
+    return;
+
+  // MeshChangedInterface can notify transfers during initial AMR before
+  // initialSetup() has computed the application grouping.
+  if (_apps_per_component == 0)
     return;
 
   // Rebuild the mapping after a mesh change; do not retain entries for the
