@@ -1,0 +1,59 @@
+name: Research native libtorch batch probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  native-libtorch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: moose-ci
+          auto-activate-base: false
+          miniforge-version: latest
+          python-version: "3.12"
+          channels: conda-forge,https://conda.software.inl.gov/public
+          channel-priority: strict
+      - name: Install MOOSE and CPU libtorch dependencies
+        shell: bash -el {0}
+        run: |
+          conda install --yes moose-dev pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Configure MOOSE with libtorch
+        shell: bash -el {0}
+        run: |
+          LIBTORCH_DIR="$(python -c 'import os, torch; print(os.path.dirname(torch.__file__))')"
+          ./configure --with-libtorch="$LIBTORCH_DIR"
+      - name: Build MooseTestApp with libtorch
+        shell: bash -el {0}
+        run: |
+          export LIBMESH_DIR="$CONDA_PREFIX"
+          export METHOD=opt
+          make -C test -j2
+          test -x test/moose_test-opt
+      - name: Reproduce valid small-data batch failure
+        shell: bash -el {0}
+        run: |
+          set +e
+          test/moose_test-opt \
+            -i test/tests/utils/libtorch_nn/ann/test_ann_trainer.i \
+            --allow-test-objects --no-color \
+            VectorPostprocessors/test_trainer/num_samples=3 \
+            VectorPostprocessors/test_trainer/num_batches=2 \
+            VectorPostprocessors/test_trainer/num_epochs=1 \
+            VectorPostprocessors/test_trainer/hidden_layers='8' \
+            VectorPostprocessors/test_trainer/max_processes=1 \
+            Outputs/file_base=native_libtorch_batch_zero
+          status=$?
+          set -e
+          test "$status" -eq 136
