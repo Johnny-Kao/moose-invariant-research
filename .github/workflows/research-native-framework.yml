@@ -11,7 +11,7 @@ permissions:
 jobs:
   native-framework:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,3 +41,19 @@ jobs:
           export PATH="$PWD/test:$PATH"
           cd test/tests/transfers/multiapp_variable_value_sample_transfer
           ../../../moose_test-opt -i pp_parent.i --no-color
+      - name: Run native AMR cache probe
+        shell: bash -el {0}
+        run: |
+          export PATH="$PWD/test:$PATH"
+          cd test/tests/transfers/multiapp_variable_value_sample_transfer
+          ../../../moose_test-opt -i amr_cache_probe.i --no-color
+          test -f amr_cache_probe_out.csv
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+          rows = list(csv.DictReader(Path("amr_cache_probe_out.csv").open()))
+          assert rows, "AMR probe produced no CSV rows"
+          values = [float(row["diff_average"]) for row in rows if row.get("diff_average")]
+          assert values, "AMR probe did not report diff_average"
+          assert max(abs(v) for v in values) < 1e-12, values
+          PY
