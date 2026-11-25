@@ -132,6 +132,11 @@ MultiAppVariableValueSamplePostprocessorTransfer::cacheElemToPostprocessorData()
   if (!_directions.isValueSet("from_multiapp"))
     return;
 
+  // Rebuild the mapping after a mesh change; do not retain entries for the
+  // previous active-element layout.
+  _cached_multiapp_pos_ids.clear();
+  _needed_postprocessors.clear();
+
   // Cache the Multiapp position ID for every element.
   auto & mesh = _fe_problem.mesh().getMesh();
   unsigned int multiapp_pos_id = 0;
