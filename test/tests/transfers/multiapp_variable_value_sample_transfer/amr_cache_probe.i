@@ -6,6 +6,12 @@
 [Adaptivity]
   initial_marker = uniform
   initial_steps = 1
+  [Markers]
+    [uniform]
+      type = UniformMarker
+      mark = refine
+    []
+  []
 []
 
 [Postprocessors]
