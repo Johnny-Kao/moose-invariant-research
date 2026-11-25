@@ -28,7 +28,7 @@ jobs:
         shell: bash -el {0}
         run: |
           conda install --yes moose-dev pip
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.5.1+cpu'
       - name: Configure MOOSE with libtorch
         shell: bash -el {0}
         run: |
