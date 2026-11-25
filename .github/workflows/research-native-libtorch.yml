@@ -33,6 +33,8 @@ jobs:
         shell: bash -el {0}
         run: |
           LIBTORCH_DIR="$(python -c 'import os, torch; print(os.path.dirname(torch.__file__))')"
+          echo "LIBTORCH_DIR=$LIBTORCH_DIR" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$LIBTORCH_DIR/lib:$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
           ./configure --with-libtorch="$LIBTORCH_DIR"
       - name: Build MooseTestApp with libtorch
         shell: bash -el {0}
