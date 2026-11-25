@@ -39,7 +39,11 @@ mapping (`[0, 1, 2]` consumed instead of `[2, 0, 1]`) in
 The first fixed-source native run removed the FPE and completed the AMR input,
 but the harness initially used an invalid zero-error oracle and failed on finite
 nonzero values. The corrected harness only requires completion and finite
-postprocessor output; a rerun is pending.
+postprocessor output, and passed on the same native Linux setup:
+[GREEN run 45559576212](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45559576212).
+The probe reported finite values `[-2.0, 1.8710505174971, 0.0034154370748973,
+0.0034154370748973]`; these are observed diagnostics, not an assumed zero-error
+oracle.
 
 ## Actual consequence
 
@@ -70,4 +74,4 @@ invariant. No upstream action taken.
 - G03 materiality: MATERIAL for AMR-coupled simulations
 - G04 budget: CONTROLLED
 - G05 evidence: PASS for native AMR crash; stale-cache mapping remains model-level
-- G06: GO to staging review after corrected fixed-path GREEN run; no upstream authorization
+- G06: GO to staging review; no upstream authorization
