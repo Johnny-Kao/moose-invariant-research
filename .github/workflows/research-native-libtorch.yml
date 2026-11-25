@@ -27,12 +27,12 @@ jobs:
       - name: Install MOOSE and CPU libtorch dependencies
         shell: bash -el {0}
         run: |
-          conda install --yes moose-dev pip
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.5.1+cpu'
+          conda install --yes moose-dev
+          ./scripts/setup_libtorch.sh --version=2.1.0 --libtorch-dest="$RUNNER_TEMP"
       - name: Configure MOOSE with libtorch
         shell: bash -el {0}
         run: |
-          LIBTORCH_DIR="$(python -c 'import os, torch; print(os.path.dirname(torch.__file__))')"
+          LIBTORCH_DIR="$RUNNER_TEMP/libtorch"
           echo "LIBTORCH_DIR=$LIBTORCH_DIR" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$LIBTORCH_DIR/lib:$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
           ./configure --with-libtorch="$LIBTORCH_DIR"
