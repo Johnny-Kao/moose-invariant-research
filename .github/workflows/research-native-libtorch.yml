@@ -43,10 +43,9 @@ jobs:
           export METHOD=opt
           make -C test -j2
           test -x test/moose_test-opt
-      - name: Reproduce valid small-data batch failure
+      - name: Verify fixed valid small-data batch succeeds
         shell: bash -el {0}
         run: |
-          set +e
           test/moose_test-opt \
             -i test/tests/utils/libtorch_nn/ann/test_ann_trainer.i \
             --allow-test-objects --no-color \
@@ -56,6 +55,3 @@ jobs:
             VectorPostprocessors/test_trainer/hidden_layers='8' \
             VectorPostprocessors/test_trainer/max_processes=1 \
             Outputs/file_base=native_libtorch_batch_zero
-          status=$?
-          set -e
-          test "$status" -eq 136

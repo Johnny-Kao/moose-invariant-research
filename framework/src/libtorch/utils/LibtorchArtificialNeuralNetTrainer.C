@@ -39,6 +39,9 @@ LibtorchArtificialNeuralNetTrainer<SamplerType>::computeBatchSize(const unsigned
   else
   {
     const unsigned int sample_per_batch_1 = num_samples / num_batches;
+  if (sample_per_batch_1 <= 1)
+    return sample_per_batch_1;
+
     const unsigned int remainder_1 = num_samples % num_batches;
     const unsigned int sample_per_batch_2 = sample_per_batch_1 - 1;
     const unsigned int remainder_2 =
