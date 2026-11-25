@@ -1,22 +1,24 @@
 # Staging recommendation
 
-## First candidate: AMR cache replacement in `MultiAppVariableValueSamplePostprocessorTransfer`
+## First candidate: AMR setup/cache lifecycle in `MultiAppVariableValueSamplePostprocessorTransfer`
 
-This is the strongest SmartPR candidate among the five because it is a silent
-wrong-result defect in a normal framework execution path, not an optional-module
-input-validation edge. `meshChanged()` invokes the cache builder, the builder
-appends to `_cached_multiapp_pos_ids`, and `execute()` consumes that vector from
-index zero. A mesh change that alters active-element order therefore violates the
-cache/order invariant and can transfer a valid postprocessor value to the wrong
-element or array component.
+This is the strongest SmartPR candidate among the five because it is a native
+AMR crash in a normal framework execution path, with a second silent-cache
+invariant in the same function. Initial AMR can call `meshChanged()` before
+`initialSetup()` assigns `_apps_per_component`; the cache builder then divides by
+zero and aborts the process. Later rebuilds append to
+`_cached_multiapp_pos_ids`, so an active-element reorder can still map values to
+the wrong element or array component.
 
-The proposed patch is small and local: clear the current element mapping before
-rebuilding it. The existing transfer test directory already supplies the natural
-regression location; add a deterministic AMR change between two transfer
-executions and compare the mapped values. The source-equivalent RED/GREEN and C++
-lifecycle harness pass in [45471920306](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45471920306),
-and the exact current-upstream source check passes in
+The proposed patch is small and local: defer cache work until setup has computed
+the grouping, then clear the current mapping before each real rebuild. The native
+unmodified AMR probe reproduced the FPE in
+[45449298449](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45449298449);
+the fixed source completed the same build, baseline, and AMR probe with finite
+output in [45559576212](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45559576212).
+The exact current-upstream source check remains green in
 [45472771118](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45472771118).
 
-Do not publish an upstream PR yet. Native MOOSE GC execution remains the final
-acceptance gate.
+This is ready for staging review, not upstream publication. The stale-prefix
+part still needs a focused native value-mapping regression before being claimed
+as independently reproduced; the setup-order FPE is fully native RED/GREEN.
