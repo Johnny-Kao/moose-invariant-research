@@ -22,8 +22,11 @@ the comparison branch must never construct a zero divisor.
 
 Research Actions model plus a C++ UBSan harness reproduce the zero divisor as RED
 and verify the minimal guard as GREEN: [45470911015](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45470911015).
-Native libtorch execution is still required for staging because the module is optional
-at build time.
+The native MOOSE training entry point independently reproduces the failure with the
+official C++ libtorch package: [45590977786](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45590977786).
+The runner reports `Floating point exception` for the unchanged valid input. After
+the one-line guard, the same native command completes successfully:
+[45598038583](https://github.com/Johnny-Kao/moose-invariant-research/actions/runs/45598038583).
 
 ## Actual consequence
 
@@ -34,8 +37,8 @@ and on platforms where the fault is not trapped can produce invalid batch arithm
 ## Minimal fix / regression
 
 If `sample_per_batch_1 <= 1`, skip the “one fewer sample per batch” comparison and
-return `sample_per_batch_1`; add a regression for `(3,2)` plus existing divisible and
-`num_samples < num_batches` cases.
+return `sample_per_batch_1`; the native workflow is the regression for `(3,2)` plus
+the existing test object's normal setup.
 
 ## Collision status
 
@@ -45,8 +48,8 @@ at `next` HEAD `a75b6945b77ef4d783406982cea3e9ff753903a0`.
 ## Gate status
 
 - G01 hypothesis: PASS
-- G02 environment: LIMITED until native libtorch GC test
+- G02 environment: PASS (official C++ libtorch on GC)
 - G03 materiality: production startup failure for valid small datasets
 - G04 collision: no exact collision found
-- G05 evidence: deterministic model + source contract
-- G06: GO to native GC validation
+- G05 evidence: native RED and native GREEN
+- G06: GO for maintainer review; no upstream issue/PR opened yet
